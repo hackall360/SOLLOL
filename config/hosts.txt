@@ -1,0 +1,11 @@
+# SOLLOL Hosts Configuration
+# List one OLLOL (Ollama) host per line in the format: host:port
+# Lines starting with # are ignored
+
+# Local instance
+127.0.0.1:11434
+
+# Example remote instances (uncomment and configure as needed)
+# 10.0.0.2:11434
+# 10.0.0.3:11434
+# ollama-gpu-1.local:11434

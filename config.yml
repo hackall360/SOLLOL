@@ -1,0 +1,3 @@
+workers:
+  - http://127.0.0.1:11434  # Assuming this is a real, running Ollama instance
+  - http://127.0.0.1:9999   # A fake worker to test health checks
