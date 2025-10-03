@@ -491,9 +491,32 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 ---
 
+## 💼 Commercial & Enterprise Features
+
+**SOLLOL is free and open-source (MIT License)** for the community.
+
+However, certain **advanced enterprise features** require significant development effort and are available through **sponsored development or commercial licensing**:
+
+### Enterprise Features (Available on Request)
+
+- **🔧 Ray Train Integration** - Distributed model fine-tuning across GPU clusters
+- **🌐 Multi-Region Orchestration** - Global load balancing with geo-routing
+- **📊 Advanced Analytics** - Custom dashboards, ML-powered capacity planning
+- **🔐 Enterprise SSO** - SAML, OAuth2, LDAP integration
+- **🎯 Custom Routing Algorithms** - Tailored optimization for specific workloads
+- **🛡️ SLA Guarantees** - Priority support, incident response, uptime SLAs
+
+**Interested in enterprise features or custom development?**
+
+Contact: [GitHub Sponsors](https://github.com/sponsors/BenevolentJoker-JohnL) or open a discussion for partnership inquiries.
+
+---
+
 ## 📄 License
 
 MIT License - see [LICENSE](LICENSE) for details
+
+**SOLLOL core is free forever.** Enterprise features require sponsorship/licensing.
 
 ---
 
