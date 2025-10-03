@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  # SOLLOL Gateway
+  sollol:
+    build: .
+    ports:
+      - "8000:8000"
+      - "9090:9090"
+    environment:
+      - RAY_WORKERS=4
+      - DASK_WORKERS=4
+      - SOLLOL_AUTH_ENABLED=false  # Set to true for production
+    volumes:
+      - ./config/hosts.txt:/app/config/hosts.txt
+      - sollol-data:/app/data
+    networks:
+      - sollol-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    depends_on:
+      - ollama-node-1
+      - ollama-node-2
+
+  # Ollama Node 1 (GPU - if available)
+  ollama-node-1:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models-1:/root/.ollama
+    networks:
+      - sollol-network
+    restart: unless-stopped
+    # Uncomment for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Ollama Node 2 (CPU)
+  ollama-node-2:
+    image: ollama/ollama:latest
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama-models-2:/root/.ollama
+    networks:
+      - sollol-network
+    restart: unless-stopped
+
+  # Ollama Node 3 (CPU)
+  ollama-node-3:
+    image: ollama/ollama:latest
+    ports:
+      - "11436:11434"
+    volumes:
+      - ollama-models-3:/root/.ollama
+    networks:
+      - sollol-network
+    restart: unless-stopped
+
+  # Prometheus (Metrics)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - sollol-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+
+  # Grafana (Visualization)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - sollol-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  sollol-data:
+  ollama-models-1:
+  ollama-models-2:
+  ollama-models-3:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  sollol-network:
+    driver: bridge

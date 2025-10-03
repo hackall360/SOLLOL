@@ -201,12 +201,15 @@ class IntelligentRouter:
         Returns:
             (selected_host, routing_decision) tuple with reasoning
         """
-        if not available_hosts:
+        # Filter to only truly available hosts
+        available = [h for h in available_hosts if h.get('available', True)]
+
+        if not available:
             raise ValueError("No available hosts")
 
         # Score each host
         scored_hosts = []
-        for host_meta in available_hosts:
+        for host_meta in available:
             score = self._score_host_for_context(host_meta, context)
             scored_hosts.append((host_meta, score))
 
@@ -286,9 +289,13 @@ class IntelligentRouter:
         score *= success_rate  # Direct multiplier
 
         latency_ms = host_meta.get('latency_ms', 200.0)
-        # Latency penalty scales with task priority
+        # Latency penalty scales with task priority and is more aggressive for extreme values
         latency_weight = 1.0 + (context.priority / 10.0)  # 1.0 to 2.0
-        latency_penalty = min(latency_ms / 100.0, 5.0) * latency_weight
+        # Use exponential penalty for very high latency (>1000ms)
+        if latency_ms > 1000:
+            latency_penalty = (latency_ms / 100.0) * latency_weight
+        else:
+            latency_penalty = min(latency_ms / 100.0, 10.0) * latency_weight
         score /= (1 + latency_penalty)
 
         # Factor 4: Additional load considerations

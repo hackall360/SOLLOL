@@ -1,0 +1,39 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'sollol'
+    environment: 'production'
+
+scrape_configs:
+  # SOLLOL Gateway metrics
+  - job_name: 'sollol'
+    static_configs:
+      - targets: ['sollol:9090']
+        labels:
+          service: 'gateway'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Ollama nodes (if they expose metrics)
+  - job_name: 'ollama'
+    static_configs:
+      - targets:
+          - 'ollama-node-1:11434'
+          - 'ollama-node-2:11434'
+          - 'ollama-node-3:11434'
+        labels:
+          service: 'ollama'
+
+# Alerting rules
+rule_files:
+  # - "alerts.yml"
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
