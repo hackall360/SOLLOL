@@ -22,7 +22,7 @@
 ### **Free · Full-Featured · Open Source**
 **No artificial limits. Enterprise extensions available for sponsorship.**
 
-[Quick Start](#-quick-start-5-minutes) · [Benchmarks](BENCHMARKS.md) · [Architecture](ARCHITECTURE.md) · [Enterprise Features](#-free-vs-enterprise-features)
+[📚 Documentation](https://benevolentjoker-johnl.github.io/SOLLOL/) · [Quick Start](#-quick-start-5-minutes) · [Benchmarks](BENCHMARKS.md) · [Architecture](ARCHITECTURE.md) · [Enterprise](#-enterprise-roadmap)
 
 </div>
 
