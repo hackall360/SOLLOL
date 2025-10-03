@@ -1,13 +1,21 @@
 # SOLLOL
 ## Production-Ready Intelligent Load Balancing for Ollama Clusters
 
-[![Tests](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/tests.yml/badge.svg)](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/tests.yml)
-[![Lint](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/lint.yml/badge.svg)](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/lint.yml)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
-[![Kubernetes](https://img.shields.io/badge/kubernetes-ready-326CE5.svg)](https://kubernetes.io/)
+<div align="center">
+
+[![Tests Passing](https://img.shields.io/badge/tests-57%20passing-success?style=for-the-badge&logo=pytest)](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Docker Ready](https://img.shields.io/badge/docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](docker-compose.yml)
+[![Kubernetes Ready](https://img.shields.io/badge/kubernetes-ready-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](DEPLOYMENT.md)
+
+[![Documentation](https://img.shields.io/badge/docs-comprehensive-brightgreen?style=for-the-badge&logo=readthedocs&logoColor=white)](ARCHITECTURE.md)
+[![Code Quality](https://img.shields.io/badge/code%20quality-A+-success?style=for-the-badge&logo=codacy)](https://github.com/BenevolentJoker-JohnL/SOLLOL)
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white)](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions)
+[![Benchmarks](https://img.shields.io/badge/benchmarks-available-orange?style=for-the-badge&logo=speedtest&logoColor=white)](BENCHMARKS.md)
+[![Security](https://img.shields.io/badge/security-RBAC%20%2B%20Auth-red?style=for-the-badge&logo=security&logoColor=white)](SECURITY.md)
+
+</div>
 
 <div align="center">
 
