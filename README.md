@@ -3,6 +3,7 @@
 
 <div align="center">
 
+[![PyPI version](https://img.shields.io/pypi/v/sollol?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/sollol/)
 [![Tests Passing](https://img.shields.io/badge/tests-57%20passing-success?style=for-the-badge&logo=pytest)](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
@@ -156,27 +157,45 @@ Architecture, deployment, security, and benchmark guides totaling 5 complete doc
 
 ## 🚀 Quick Start (5 minutes)
 
-### Try the Demo (Docker Compose)
+### Installation
 
-```bash
-# Clone the repo
-git clone https://github.com/BenevolentJoker-JohnL/SOLLOL.git
-cd SOLLOL
+=== "PyPI (Recommended)"
 
-# Start the full stack (SOLLOL + 3 Ollama nodes + Grafana + Prometheus)
-docker-compose up -d
+    ```bash
+    # Install from PyPI
+    pip install sollol
 
-# Pull a model on each node
-docker exec -it sollol-ollama-node-1-1 ollama pull llama3.2
-docker exec -it sollol-ollama-node-2-1 ollama pull llama3.2
-docker exec -it sollol-ollama-node-3-1 ollama pull llama3.2
+    # Verify installation
+    sollol --version
+    ```
 
-# View the live dashboard
-open http://localhost:8000/dashboard.html
+=== "From Source"
 
-# View metrics in Grafana
-open http://localhost:3000  # admin/admin
-```
+    ```bash
+    # Clone and install
+    git clone https://github.com/BenevolentJoker-JohnL/SOLLOL.git
+    cd SOLLOL
+    pip install -e .
+    ```
+
+=== "Docker Compose"
+
+    ```bash
+    # Clone the repo
+    git clone https://github.com/BenevolentJoker-JohnL/SOLLOL.git
+    cd SOLLOL
+
+    # Start the full stack (SOLLOL + 3 Ollama nodes + Grafana + Prometheus)
+    docker-compose up -d
+
+    # Pull a model on each node
+    docker exec -it sollol-ollama-node-1-1 ollama pull llama3.2
+    docker exec -it sollol-ollama-node-2-1 ollama pull llama3.2
+    docker exec -it sollol-ollama-node-3-1 ollama pull llama3.2
+
+    # View the live dashboard
+    open http://localhost:8000/dashboard.html
+    ```
 
 ### Python SDK (One Line)
 

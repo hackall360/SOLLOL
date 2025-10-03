@@ -1,0 +1,32 @@
+# Include documentation
+include README.md
+include LICENSE
+include CHANGELOG.md
+include ARCHITECTURE.md
+include BENCHMARKS.md
+include CONTRIBUTING.md
+include DEPLOYMENT.md
+include SECURITY.md
+
+# Include configuration examples
+recursive-include config *.txt *.yaml *.yml
+
+# Include dashboard
+include dashboard.html
+
+# Exclude development files
+exclude .gitignore
+exclude .dockerignore
+exclude docker-compose.yml
+exclude Dockerfile
+exclude prometheus.yml
+recursive-exclude .github *
+recursive-exclude tests *
+recursive-exclude benchmarks *
+recursive-exclude docs *
+recursive-exclude examples *
+
+# Exclude cache and build files
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude .DS_Store

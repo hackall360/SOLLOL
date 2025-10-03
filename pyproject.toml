@@ -6,8 +6,43 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sollol"
 version = "0.1.0"
-description = "SOLLOL - Super Ollama Load-balancer with performance-aware routing"
-requires-python = ">=3.8"
+description = "Production-ready intelligent load balancing for Ollama clusters with context-aware routing and adaptive learning"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "BenevolentJoker-JohnL", email = "benevolentjoker@sollol.dev"}
+]
+maintainers = [
+    {name = "BenevolentJoker-JohnL", email = "benevolentjoker@sollol.dev"}
+]
+keywords = [
+    "ollama",
+    "load-balancing",
+    "ai",
+    "llm",
+    "distributed-systems",
+    "intelligent-routing",
+    "ray",
+    "dask",
+    "fastapi",
+    "kubernetes",
+    "docker"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: System :: Distributed Computing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+]
 dependencies = [
     "ray[serve]>=2.9.0",
     "pyyaml>=6.0",
@@ -21,6 +56,14 @@ dependencies = [
     "prometheus-client>=0.17.0",
     "tenacity>=8.2.0"
 ]
+
+[project.urls]
+Homepage = "https://github.com/BenevolentJoker-JohnL/SOLLOL"
+Documentation = "https://benevolentjoker-johnl.github.io/SOLLOL/"
+Repository = "https://github.com/BenevolentJoker-JohnL/SOLLOL"
+Issues = "https://github.com/BenevolentJoker-JohnL/SOLLOL/issues"
+Changelog = "https://github.com/BenevolentJoker-JohnL/SOLLOL/releases"
+Sponsor = "https://github.com/sponsors/BenevolentJoker-JohnL"
 
 [project.optional-dependencies]
 dev = [
