@@ -42,6 +42,7 @@ if sys.platform != 'win32':
 
 from sollol.sollol import SOLLOL
 from sollol.config import SOLLOLConfig
+from sollol.client import SOLLOLClient, connect
 
 __version__ = "0.1.0"
-__all__ = ["SOLLOL", "SOLLOLConfig"]
+__all__ = ["SOLLOL", "SOLLOLConfig", "SOLLOLClient", "connect"]
