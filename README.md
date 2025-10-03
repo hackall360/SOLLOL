@@ -265,57 +265,110 @@ response = sollol.chat("Your prompt", priority=8)
 
 ## 🏗️ Architecture
 
+### Drop-In Replacement for Ollama
+
+**SOLLOL transparently replaces Ollama on port 11434** — your agents don't need any configuration changes.
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         CLIENT APPLICATIONS                      │
-│         (RAG Systems, Chatbots, Multi-Agent Frameworks)         │
-└────────────┬────────────────────────────────────────────────────┘
-             │ HTTP/REST API
-             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    SOLLOL GATEWAY (Port 8000)                    │
-│ ┌─────────────────────────────────────────────────────────────┐ │
-│ │              🧠 INTELLIGENT ROUTING ENGINE                   │ │
-│ │                                                               │ │
-│ │  1️⃣  Request Analysis                                        │ │
-│ │     • Task type detection (embed/generate/classify)          │ │
-│ │     • Complexity estimation (~tokens, conversation depth)    │ │
-│ │     • Resource prediction (GPU/CPU requirements)             │ │
-│ │                                                               │ │
-│ │  2️⃣  Multi-Factor Host Scoring                              │ │
-│ │     • Availability (health checks)                           │ │
-│ │     • Resource adequacy (GPU mem, CPU load)                  │ │
-│ │     • Performance metrics (latency, success rate)            │ │
-│ │     • Load balancing (avoid hot nodes)                       │ │
-│ │     • Priority alignment (match task urgency to node tier)   │ │
-│ │     • Task specialization (prefer nodes good at this type)   │ │
-│ │                                                               │ │
-│ │  3️⃣  Adaptive Learning                                       │ │
-│ │     • Records actual execution times                         │ │
-│ │     • Improves future predictions                            │ │
-│ │     • Detects degraded nodes automatically                   │ │
-│ └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│ ┌─────────────────────────────────────────────────────────────┐ │
-│ │              🎯 PRIORITY QUEUE SYSTEM                        │ │
-│ │     • 1-10 priority levels with age-based fairness           │ │
-│ │     • Async-friendly, non-blocking operations                │ │
-│ └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│ ┌─────────────────────────────────────────────────────────────┐ │
-│ │              ⚡ RAY + DASK EXECUTION LAYER                   │ │
-│ │     • Ray actors for concurrent request handling             │ │
-│ │     • Dask for distributed batch processing                  │ │
-│ └─────────────────────────────────────────────────────────────┘ │
-└────────┬──────────────┬──────────────┬──────────────────────────┘
-         │              │              │
-         ▼              ▼              ▼
-   ┌─────────┐    ┌─────────┐    ┌─────────┐
-   │ Ollama  │    │ Ollama  │    │ Ollama  │
-   │ Node 1  │    │ Node 2  │    │ Node 3  │
-   │  (GPU)  │    │  (GPU)  │    │  (CPU)  │
-   │ :11434  │    │ :11435  │    │ :11436  │
-   └─────────┘    └─────────┘    └─────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                    YOUR EXISTING AGENTS                         │
+│        (RAG, Chatbots, AutoGen, LangChain, CrewAI)             │
+│                                                                  │
+│             export OLLAMA_HOST=localhost:11434                  │
+└────────────────────────┬───────────────────────────────────────┘
+                         │
+                         │ Same API, Zero Config Change
+                         ▼
+┌────────────────────────────────────────────────────────────────┐
+│                  SOLLOL (Port 11434)                            │
+│          Drop-in replacement for Ollama                         │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │         🧠 INTELLIGENT ROUTING ENGINE                     │  │
+│  │                                                            │  │
+│  │  1️⃣  Request Analysis                                     │  │
+│  │     • Task type: generation/embed/classify/analyze        │  │
+│  │     • Complexity: token count, conversation depth         │  │
+│  │     • Requirements: GPU/CPU, priority level               │  │
+│  │                                                            │  │
+│  │  2️⃣  Multi-Factor Scoring (7 factors)                    │  │
+│  │     • Node availability & health                          │  │
+│  │     • Resource adequacy (GPU memory, CPU capacity)        │  │
+│  │     • Current performance (latency, success rate)         │  │
+│  │     • Load balancing (avoid overloaded nodes)             │  │
+│  │     • Priority alignment (critical → fast nodes)          │  │
+│  │     • Task specialization (route to best-fit node)        │  │
+│  │     • Resource headroom (can handle estimated duration)   │  │
+│  │                                                            │  │
+│  │  3️⃣  Adaptive Learning                                    │  │
+│  │     • Records actual execution times                      │  │
+│  │     • Improves routing decisions over time                │  │
+│  │     • Auto-detects degraded nodes                         │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │         🎯 PRIORITY QUEUE + FAILOVER                      │  │
+│  │     • 10-level priority (10=critical, 1=batch)            │  │
+│  │     • Age-based fairness (prevents starvation)            │  │
+│  │     • Auto-retry with exponential backoff (3 attempts)    │  │
+│  │     • Dynamic host exclusion on failures                  │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└──────┬──────────────┬──────────────┬──────────────────────────┘
+       │              │              │
+       │ Routes to → │              │
+       ▼              ▼              ▼
+┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐
+│  Ollama   │  │  Ollama   │  │  Ollama   │  │  Ollama   │
+│  Node 1   │  │  Node 2   │  │  Node 3   │  │  Node N   │
+│  (GPU)    │  │  (GPU)    │  │  (CPU)    │  │  (...)    │
+│  :11435   │  │  :11436   │  │  :11437   │  │  :1143N   │
+└───────────┘  └───────────┘  └───────────┘  └───────────┘
+      ↓              ↓              ↓              ↓
+   llama3.2      llama3.2       llama3.2      llama3.2
+   mistral       mistral        phi           (other)
+```
+
+### Key Design Principles
+
+**🔌 Drop-In Replacement**
+- SOLLOL listens on port **11434** (standard Ollama port)
+- Existing agents need **zero configuration changes**
+- Just point to `localhost:11434` — SOLLOL handles the rest
+- Compatible with **all Ollama-compatible clients**
+
+**🎯 Intelligent Distribution**
+- Backend Ollama nodes run on different ports (**11435+**)
+- SOLLOL analyzes each request and routes to optimal node
+- Transparent to clients — they see one unified Ollama instance
+- Automatic failover if a node goes down
+
+**📊 Observable & Manageable**
+- Real-time dashboard at `http://localhost:11434/dashboard.html`
+- Prometheus metrics at `http://localhost:9090`
+- Per-request routing decisions logged
+- Health monitoring for all nodes
+
+### Deployment Options
+
+**Option A: Single Machine (Development)**
+```bash
+# SOLLOL on :11434, Ollama nodes on :11435, :11436, :11437
+docker-compose up -d
+export OLLAMA_HOST=localhost:11434  # Point your agents here
+```
+
+**Option B: Cluster (Production)**
+```bash
+# SOLLOL on main server :11434
+# Ollama nodes on separate GPU servers
+# Agents connect to SOLLOL, get distributed across cluster
+```
+
+**Option C: Kubernetes**
+```bash
+# SOLLOL as a service on :11434
+# Ollama nodes as StatefulSet
+# Apps use sollol-service:11434
 ```
 
 [**Detailed Architecture Documentation →**](ARCHITECTURE.md)

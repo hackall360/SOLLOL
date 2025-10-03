@@ -31,10 +31,10 @@ COPY src/ ./src/
 COPY config/ ./config/
 
 # Expose ports
-EXPOSE 8000 9090
+EXPOSE 11434 9090
 
 # Run SOLLOL
-CMD ["python", "-m", "sollol.cli", "up", "--workers", "4"]
+CMD ["python", "-m", "sollol.cli", "up", "--workers", "4", "--port", "11434"]
 ```
 
 **Build and Run**:
@@ -44,7 +44,7 @@ docker build -t sollol:latest .
 
 # Run container
 docker run -d \
-  -p 8000:8000 \
+  -p 11434:11434 \
   -p 9090:9090 \
   -v $(pwd)/config:/app/config \
   --name sollol \
@@ -58,16 +58,17 @@ docker run -d \
 version: '3.8'
 
 services:
-  # SOLLOL Gateway
+  # SOLLOL Gateway (Drop-in replacement - listens on port 11434)
   sollol:
     build: .
     ports:
-      - "8000:8000"
-      - "9090:9090"
+      - "11434:11434"  # Drop-in replacement for Ollama
+      - "9090:9090"    # Prometheus metrics
     environment:
       - RAY_WORKERS=4
       - DASK_WORKERS=4
       - SOLLOL_AUTH_ENABLED=true
+      - SOLLOL_PORT=11434
     volumes:
       - ./config/hosts.txt:/app/config/hosts.txt
       - sollol-data:/app/data
@@ -83,11 +84,11 @@ services:
           cpus: '2'
           memory: 4G
 
-  # Ollama Node 1 (GPU)
+  # Ollama Node 1 (GPU) - Backend on different port
   ollama-gpu-1:
     image: ollama/ollama:latest
     ports:
-      - "11434:11434"
+      - "11435:11434"  # Backend node
     volumes:
       - ollama-models:/root/.ollama
     networks:
@@ -100,11 +101,11 @@ services:
               count: 1
               capabilities: [gpu]
 
-  # Ollama Node 2 (CPU)
+  # Ollama Node 2 (CPU) - Backend on different port
   ollama-cpu-1:
     image: ollama/ollama:latest
     ports:
-      - "11435:11434"
+      - "11436:11434"  # Backend node
     volumes:
       - ollama-models-cpu:/root/.ollama
     networks:
@@ -203,7 +204,7 @@ spec:
       - name: sollol
         image: sollol:latest
         ports:
-        - containerPort: 8000
+        - containerPort: 11434
           name: api
         - containerPort: 9090
           name: metrics
@@ -229,13 +230,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /api/health
-            port: 8000
+            port: 11434
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /api/health
-            port: 8000
+            port: 11434
           initialDelaySeconds: 10
           periodSeconds: 5
 ---
@@ -248,8 +249,8 @@ spec:
     app: sollol
   ports:
   - name: api
-    port: 8000
-    targetPort: 8000
+    port: 11434
+    targetPort: 11434
   - name: metrics
     port: 9090
     targetPort: 9090
@@ -417,7 +418,7 @@ spec:
     app: sollol
   ports:
   - port: 443
-    targetPort: 8000
+    targetPort: 11434
 ```
 
 ### Google Cloud GKE

@@ -1,11 +1,14 @@
 # SOLLOL Hosts Configuration
-# List one OLLOL (Ollama) host per line in the format: host:port
+# List backend Ollama nodes (NOT SOLLOL itself) in the format: host:port
+# SOLLOL listens on 11434, backend nodes should be on different ports
 # Lines starting with # are ignored
 
-# Local instance
-127.0.0.1:11434
+# Backend Ollama nodes (when using docker-compose)
+127.0.0.1:11435
+127.0.0.1:11436
+127.0.0.1:11437
 
 # Example remote instances (uncomment and configure as needed)
-# 10.0.0.2:11434
-# 10.0.0.3:11434
-# ollama-gpu-1.local:11434
+# 10.0.0.2:11435
+# 10.0.0.3:11436
+# ollama-gpu-1.local:11435

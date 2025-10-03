@@ -1,16 +1,17 @@
 version: '3.8'
 
 services:
-  # SOLLOL Gateway
+  # SOLLOL Gateway (Drop-in replacement - listens on port 11434)
   sollol:
     build: .
     ports:
-      - "8000:8000"
-      - "9090:9090"
+      - "11434:11434"  # Drop-in replacement for Ollama
+      - "9090:9090"    # Prometheus metrics
     environment:
       - RAY_WORKERS=4
       - DASK_WORKERS=4
       - SOLLOL_AUTH_ENABLED=false  # Set to true for production
+      - SOLLOL_PORT=11434
     volumes:
       - ./config/hosts.txt:/app/config/hosts.txt
       - sollol-data:/app/data
@@ -29,11 +30,11 @@ services:
       - ollama-node-1
       - ollama-node-2
 
-  # Ollama Node 1 (GPU - if available)
+  # Ollama Node 1 (GPU - if available) - Backend on different port
   ollama-node-1:
     image: ollama/ollama:latest
     ports:
-      - "11434:11434"
+      - "11435:11434"  # Backend node
     volumes:
       - ollama-models-1:/root/.ollama
     networks:
@@ -48,22 +49,22 @@ services:
     #           count: 1
     #           capabilities: [gpu]
 
-  # Ollama Node 2 (CPU)
+  # Ollama Node 2 (CPU) - Backend on different port
   ollama-node-2:
     image: ollama/ollama:latest
     ports:
-      - "11435:11434"
+      - "11436:11434"  # Backend node
     volumes:
       - ollama-models-2:/root/.ollama
     networks:
       - sollol-network
     restart: unless-stopped
 
-  # Ollama Node 3 (CPU)
+  # Ollama Node 3 (CPU) - Backend on different port
   ollama-node-3:
     image: ollama/ollama:latest
     ports:
-      - "11436:11434"
+      - "11437:11434"  # Backend node
     volumes:
       - ollama-models-3:/root/.ollama
     networks:

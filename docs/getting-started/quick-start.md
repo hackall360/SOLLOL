@@ -37,20 +37,24 @@ docker exec sollol-ollama-node-3-1 ollama pull llama3.2
 ## Step 4: Test the Setup
 
 ```bash
-# Send a test request
-curl -X POST http://localhost:8000/api/chat \
+# Send a test request to SOLLOL (drop-in replacement on port 11434)
+curl -X POST http://localhost:11434/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama3.2",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
+
+# Or use the standard Ollama API (SOLLOL is transparent!)
+export OLLAMA_HOST=localhost:11434
+ollama run llama3.2 "Hello!"
 ```
 
 ## Step 5: View the Dashboard
 
 Open your browser:
 
-- **SOLLOL Dashboard**: http://localhost:8000/dashboard.html
+- **SOLLOL Dashboard**: http://localhost:11434/dashboard.html
 - **Grafana**: http://localhost:3000 (admin/admin)
 - **Prometheus**: http://localhost:9091
 
@@ -59,8 +63,8 @@ Open your browser:
 ```python
 from sollol import connect
 
-# Connect to SOLLOL (zero config!)
-sollol = connect("http://localhost:8000")
+# Connect to SOLLOL (drop-in replacement - same port as Ollama!)
+sollol = connect("http://localhost:11434")
 
 # Chat with intelligent routing
 response = sollol.chat(
@@ -93,11 +97,15 @@ docker-compose restart ollama-node-1
 
 ### Port conflicts
 
-Edit `docker-compose.yml` to change port mappings:
+If port 11434 is already in use (e.g., you have Ollama running), stop it first:
 
-```yaml
+```bash
+# Stop standalone Ollama (if running)
+pkill ollama
+
+# Or change SOLLOL's port in docker-compose.yml
 ports:
-  - "8001:8000"  # Change 8000 to 8001
+  - "11435:11434"  # Change external port
 ```
 
 ### GPU not detected
