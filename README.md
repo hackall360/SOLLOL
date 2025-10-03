@@ -491,24 +491,58 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 ---
 
-## 💼 Commercial & Enterprise Features
+## 💼 Free vs Enterprise Features
 
-**SOLLOL is free and open-source (MIT License)** for the community.
+### ✅ FREE (Open Source - MIT License)
 
-However, certain **advanced enterprise features** require significant development effort and are available through **sponsored development or commercial licensing**:
+**Everything you need for production deployments:**
 
-### Enterprise Features (Available on Request)
+| Feature Category | Included |
+|-----------------|----------|
+| **🧠 Intelligent Routing** | ✅ Full context-aware routing engine |
+| **🎯 Priority Queue** | ✅ 10-level priority system with fairness |
+| **🔄 Failover & Recovery** | ✅ Automatic retry, node exclusion, health checks |
+| **📊 Observability** | ✅ Real-time dashboard, Prometheus metrics, routing transparency |
+| **⚡ High Performance** | ✅ Ray actors, Dask batch processing, <10ms routing overhead |
+| **🔒 Security** | ✅ API key auth, RBAC, rate limiting |
+| **🐳 Deployment** | ✅ Docker, Kubernetes, cloud guides (AWS/GCP/Azure) |
+| **📚 Documentation** | ✅ Architecture, benchmarks, deployment, security docs |
+| **🧪 Testing** | ✅ Full test suite (57 tests), CI/CD pipelines |
+| **🤝 Community Support** | ✅ GitHub issues, discussions, contributions welcome |
 
-- **🔧 Ray Train Integration** - Distributed model fine-tuning across GPU clusters
-- **🌐 Multi-Region Orchestration** - Global load balancing with geo-routing
-- **📊 Advanced Analytics** - Custom dashboards, ML-powered capacity planning
-- **🔐 Enterprise SSO** - SAML, OAuth2, LDAP integration
-- **🎯 Custom Routing Algorithms** - Tailored optimization for specific workloads
-- **🛡️ SLA Guarantees** - Priority support, incident response, uptime SLAs
+**The free version is production-ready and fully functional.** No artificial limits, no feature gates.
 
-**Interested in enterprise features or custom development?**
+---
 
-Contact: [GitHub Sponsors](https://github.com/sponsors/BenevolentJoker-JohnL) or open a discussion for partnership inquiries.
+### 💎 ENTERPRISE (Sponsored Development)
+
+**Advanced features requiring significant engineering effort** (not yet implemented):
+
+| Feature | Description | Use Case |
+|---------|-------------|----------|
+| **🔧 Ray Train Integration** | Distributed model fine-tuning across GPU clusters | Train custom LLMs on your infrastructure |
+| **🌐 Multi-Region Orchestration** | Global load balancing with geo-aware routing | Worldwide deployments with <100ms latency |
+| **📊 Advanced Analytics Suite** | ML-powered capacity planning, cost optimization | Predictive scaling, budget management |
+| **🔐 Enterprise SSO** | SAML, OAuth2, LDAP, Active Directory integration | Corporate identity management |
+| **🎯 Custom Routing Engines** | Bespoke algorithms for specialized workloads | Industry-specific optimizations |
+| **🛡️ SLA Guarantees** | 99.9%+ uptime, priority support, incident response | Mission-critical production systems |
+| **📞 Dedicated Support** | Slack channel, video calls, architecture reviews | Hands-on partnership |
+| **🏗️ Custom Development** | New features, integrations, deployment assistance | Tailored to your infrastructure |
+
+**Why Enterprise Features Require Sponsorship:**
+
+These features involve:
+- Months of development time per feature
+- Complex integration with enterprise systems
+- Ongoing maintenance and support
+- Testing across diverse environments
+- Documentation and training materials
+
+**Interested in Enterprise Features?**
+
+📧 Contact via [GitHub Sponsors](https://github.com/sponsors/BenevolentJoker-JohnL) or open a [Discussion](https://github.com/BenevolentJoker-JohnL/SOLLOL/discussions) for partnership inquiries.
+
+**Typical engagement:** Discovery call → Proposal → Fixed-price or retainer → Development → Delivery + support
 
 ---
 
