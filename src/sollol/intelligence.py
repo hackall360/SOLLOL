@@ -162,7 +162,7 @@ class IntelligentRouter:
 
         # Determine if GPU is beneficial
         requires_gpu = (
-            task_type in ['generation', 'embedding'] and
+            task_type in ['generation', 'embedding', 'summarization', 'analysis'] and
             complexity in ['medium', 'complex']
         )
 

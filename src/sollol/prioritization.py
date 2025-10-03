@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import heapq
 
-@dataclass(order=True)
+@dataclass
 class PrioritizedTask:
     """
     A task with priority for queue management.
@@ -19,14 +19,14 @@ class PrioritizedTask:
     1. Priority (higher first)
     2. Age (older first, prevents starvation)
     """
-    priority: int = field(compare=True)
-    timestamp: float = field(compare=True)
-    task_id: str = field(compare=False)
-    payload: Dict = field(compare=False)
-    future: asyncio.Future = field(compare=False)
+    priority: int
+    timestamp: float
+    task_id: str
+    payload: Dict
+    future: asyncio.Future
 
     def __lt__(self, other):
-        # Higher priority goes first
+        # Higher priority goes first (inverted for min-heap)
         if self.priority != other.priority:
             return self.priority > other.priority
         # If same priority, older tasks go first (FIFO within priority)
