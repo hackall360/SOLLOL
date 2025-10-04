@@ -1,101 +1,71 @@
-
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "sollol"
-version = "0.1.0"
-description = "Production-ready intelligent load balancing for Ollama clusters with context-aware routing and adaptive learning"
+version = "0.3.0"
+description = "Super Ollama Load Balancer with Intelligent Routing and Distributed Inference"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "BenevolentJoker-JohnL", email = "benevolentjoker@sollol.dev"}
+    {name = "BenevolentJoker-JohnL", email = "benevolentjoker@gmail.com"}
 ]
-maintainers = [
-    {name = "BenevolentJoker-JohnL", email = "benevolentjoker@sollol.dev"}
-]
-keywords = [
-    "ollama",
-    "load-balancing",
-    "ai",
-    "llm",
-    "distributed-systems",
-    "intelligent-routing",
-    "ray",
-    "dask",
-    "fastapi",
-    "kubernetes",
-    "docker"
-]
+keywords = ["ai", "llm", "distributed", "ollama", "load-balancing", "inference", "llama-cpp"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "Intended Audience :: System Administrators",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Distributed Computing",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "Topic :: System :: Distributed Computing",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
 ]
 dependencies = [
-    "ray[serve]>=2.9.0",
-    "pyyaml>=6.0",
-    "click>=8.0",
-    "aiohttp>=3.8.0",
-    "dask[distributed]>=2023.0.0",
-    "typer>=0.9.0",
-    "httpx>=0.25.0",
-    "uvicorn>=0.23.0",
-    "fastapi>=0.100.0",
-    "prometheus-client>=0.17.0",
-    "tenacity>=8.2.0"
+    "requests>=2.31.0",
+    "httpx>=0.24.0",
+    "ipaddress>=1.0.23",
+    "dask[distributed]>=2024.1.0",
+    "rich>=13.7.0",
+    "flask>=2.0.0",
+    "flask-cors>=4.0.0",
+    "flask-sock>=0.7.0",
+    "waitress>=3.0.0",
 ]
-
-[project.urls]
-Homepage = "https://github.com/BenevolentJoker-JohnL/SOLLOL"
-Documentation = "https://benevolentjoker-johnl.github.io/SOLLOL/"
-Repository = "https://github.com/BenevolentJoker-JohnL/SOLLOL"
-Issues = "https://github.com/BenevolentJoker-JohnL/SOLLOL/issues"
-Changelog = "https://github.com/BenevolentJoker-JohnL/SOLLOL/releases"
-Sponsor = "https://github.com/sponsors/BenevolentJoker-JohnL"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
+    "pytest>=7.0.0",
     "black>=23.0.0",
-    "flake8>=6.0.0",
-    "isort>=5.12.0",
-    "mypy>=1.4.0",
+    "isort>=5.0.0",
+    "mypy>=1.0.0",
 ]
 
-[project.scripts]
-sollol = "sollol.cli:cli"
+[project.urls]
+Homepage = "https://github.com/BenevolentJoker-JohnL/SynapticLlamas"
+Documentation = "https://github.com/BenevolentJoker-JohnL/SynapticLlamas/blob/main/README.md"
+Repository = "https://github.com/BenevolentJoker-JohnL/SynapticLlamas"
+"Bug Tracker" = "https://github.com/BenevolentJoker-JohnL/SynapticLlamas/issues"
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-asyncio_mode = "auto"
+[project.scripts]
+sollol = "sollol.cli:main"
 
 [tool.black]
 line-length = 100
-target-version = ['py39']
+target-version = ['py38', 'py39', 'py310', 'py311']
 
 [tool.isort]
 profile = "black"
 line_length = 100
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.8"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
+ignore_missing_imports = true

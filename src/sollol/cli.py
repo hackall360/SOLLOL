@@ -2,6 +2,7 @@
 SOLLOL CLI - One-command startup for performance-aware Ollama load balancing.
 """
 import typer
+import logging
 from .gateway import start_api
 from .cluster import start_ray, start_dask
 
@@ -9,6 +10,12 @@ app = typer.Typer(
     name="sollol",
     help="SOLLOL - Super Ollama Load Balancer with performance-aware routing"
 )
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 @app.command()
 def up(
@@ -31,20 +38,19 @@ def up(
         sollol up --dask-scheduler tcp://10.0.0.1:8786
         sollol up --no-adaptive-metrics  # Disable dynamic metrics
     """
-    print(f"🚀 Starting SOLLOL")
-    print(f"   Ray workers: {workers}")
-    print(f"   Dask workers: {dask_workers}")
-    print(f"   API port: {port}")
-    print(f"   Hosts file: {hosts}")
+    logger.info("🚀 Starting SOLLOL")
+    logger.info(f"   Ray workers: {workers}")
+    logger.info(f"   Dask workers: {dask_workers}")
+    logger.info(f"   API port: {port}")
+    logger.info(f"   Hosts file: {hosts}")
     if dask_scheduler:
-        print(f"   Dask scheduler: {dask_scheduler}")
-    print()
+        logger.info(f"   Dask scheduler: {dask_scheduler}")
 
     # Initialize Ray cluster with Ollama workers
     ray_actors = start_ray(workers=workers, hosts_file=hosts)
 
     if not ray_actors:
-        print("❌ Failed to initialize Ray workers. Exiting.")
+        logger.error("❌ Failed to initialize Ray workers. Exiting.")
         return
 
     # Initialize Dask cluster
@@ -70,19 +76,19 @@ def down():
         pkill -f "ray::"
         pkill -f "dask"
     """
-    print("🛑 SOLLOL shutdown")
-    print("   To stop Ray: pkill -f 'ray::'")
-    print("   To stop Dask: pkill -f 'dask'")
+    logger.info("🛑 SOLLOL shutdown")
+    logger.info("   To stop Ray: pkill -f 'ray::'")
+    logger.info("   To stop Dask: pkill -f 'dask'")
 
 @app.command()
 def status():
     """
     Check SOLLOL service status.
     """
-    print("📊 SOLLOL Status")
-    print("   Gateway: http://localhost:8000/api/health")
-    print("   Metrics: http://localhost:9090/metrics")
-    print("   Stats: http://localhost:8000/api/stats")
+    logger.info("📊 SOLLOL Status")
+    logger.info("   Gateway: http://localhost:8000/api/health")
+    logger.info("   Metrics: http://localhost:9090/metrics")
+    logger.info("   Stats: http://localhost:8000/api/stats")
 
 if __name__ == "__main__":
     app()

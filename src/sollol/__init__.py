@@ -1,48 +1,71 @@
 """
 SOLLOL - Super Ollama Load Balancer
 
-Performance-aware load balancing for Ollama with Ray, Dask, and adaptive routing.
+Intelligent Load Balancing and Distributed Inference for Ollama
+
+Features:
+- Intelligent load balancing with adaptive routing
+- Auto-discovery of Ollama nodes and RPC backends
+- Hybrid routing: Ollama for small models, llama.cpp for large models
+- Connection pooling and health monitoring
+- Request hedging for lower latency
 
 Example:
     ```python
-    from sollol import SOLLOL, SOLLOLConfig
+    from sollol import OllamaPool, HybridRouter
+    from sollol.discovery import discover_ollama_nodes
+    from sollol.rpc_discovery import auto_discover_rpc_backends
 
-    # Configure SOLLOL for your application
-    config = SOLLOLConfig(
-        ray_workers=4,
-        dask_workers=4,
-        hosts=["10.0.0.2:11434", "10.0.0.3:11434"],
-        autobatch_interval=30
+    # Auto-discover Ollama nodes
+    pool = OllamaPool.auto_configure()
+
+    # Use hybrid routing for distributed inference
+    rpc_backends = auto_discover_rpc_backends()
+    router = HybridRouter(
+        ollama_pool=pool,
+        rpc_backends=rpc_backends,
+        enable_distributed=True
     )
 
-    # Initialize and start
-    sollol = SOLLOL(config)
-    sollol.start(blocking=False)  # Run in background
-
-    # Your application code continues...
-    # SOLLOL is now available at http://localhost:8000
-
-    # Check status
-    status = sollol.get_status()
-    print(status)
-
-    # Stop when done
-    sollol.stop()
+    # Make requests
+    response = await router.route_request(
+        model="llama3.1:405b",
+        messages=[{"role": "user", "content": "Hello!"}]
+    )
     ```
 """
-import multiprocessing
-import sys
 
-# Force fork mode for Dask on Unix systems BEFORE any imports
-if sys.platform != 'win32':
-    try:
-        multiprocessing.set_start_method('fork', force=True)
-    except RuntimeError:
-        pass  # Already set
+# Core load balancing
+from sollol.pool import OllamaPool
+from sollol.client import OllamaClient
 
+# Distributed inference
+from sollol.hybrid_router import HybridRouter
+from sollol.llama_cpp_rpc import LlamaCppRPCBackend
+from sollol.llama_cpp_coordinator import LlamaCppCoordinator
+
+# Discovery
+from sollol.discovery import discover_ollama_nodes
+from sollol.rpc_discovery import auto_discover_rpc_backends, check_rpc_server
+
+# Legacy support
 from sollol.sollol import SOLLOL
 from sollol.config import SOLLOLConfig
-from sollol.client import SOLLOLClient, connect
 
-__version__ = "0.1.0"
-__all__ = ["SOLLOL", "SOLLOLConfig", "SOLLOLClient", "connect"]
+__version__ = "0.3.0"
+__all__ = [
+    # Core
+    "OllamaPool",
+    "OllamaClient",
+    # Distributed
+    "HybridRouter",
+    "LlamaCppRPCBackend",
+    "LlamaCppCoordinator",
+    # Discovery
+    "discover_ollama_nodes",
+    "auto_discover_rpc_backends",
+    "check_rpc_server",
+    # Legacy
+    "SOLLOL",
+    "SOLLOLConfig",
+]

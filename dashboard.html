@@ -334,10 +334,15 @@
                 <strong>Task Types Learned:</strong> <span id="task-count">0</span>
             </div>
         </div>
+
+        <div class="panel full-width">
+            <h2>📜 Real-Time Logs</h2>
+            <pre id="log-container" style="max-height: 400px; overflow-y: auto; background: #0a0e27; padding: 15px; border-radius: 6px;"></pre>
+        </div>
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8000';
+        const API_BASE = 'http://localhost:8080';
         let refreshInterval;
 
         async function fetchDashboard() {
@@ -428,6 +433,25 @@
         window.addEventListener('beforeunload', () => {
             clearInterval(refreshInterval);
         });
+
+        // Log streaming
+        const logContainer = document.getElementById('log-container');
+        const socket = new WebSocket(`ws://${window.location.host}/api/logs/ws`);
+
+        socket.onmessage = (event) => {
+            const logEntry = document.createElement('div');
+            logEntry.textContent = event.data;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        };
+
+        socket.onopen = () => {
+            console.log('Log socket connected');
+        };
+
+        socket.onclose = () => {
+            console.log('Log socket disconnected');
+        };
     </script>
 </body>
 </html>

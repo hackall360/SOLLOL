@@ -94,6 +94,10 @@ class SOLLOLConfig:
     health_check_timeout: float = 5.0
     """Timeout in seconds for health checks"""
 
+    # Logging configuration
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    """Logging level for the application"""
+
     def validate(self) -> None:
         """Validate configuration parameters."""
         if self.ray_workers < 1:
@@ -133,6 +137,7 @@ class SOLLOLConfig:
             "metrics_port": self.metrics_port,
             "adaptive_metrics_enabled": self.adaptive_metrics_enabled,
             "adaptive_metrics_interval": self.adaptive_metrics_interval,
+            "log_level": self.log_level,
         }
 
     @classmethod

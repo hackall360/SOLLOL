@@ -62,6 +62,14 @@ class SOLLOL:
         self.config = config or SOLLOLConfig()
         self.config.validate()
 
+        # Configure logging
+        import logging
+        logging.basicConfig(
+            level=self.config.log_level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        self.logger = logging.getLogger(__name__)
+
         # Internal state
         self._ray_actors = []
         self._dask_client = None
@@ -69,21 +77,20 @@ class SOLLOL:
         self._running = False
         self._initialized = False
 
-        print(f"[SOLLOL] Initialized with configuration:")
-        print(f"  Ray workers: {self.config.ray_workers}")
-        print(f"  Dask workers: {self.config.dask_workers}")
-        print(f"  Hosts: {', '.join(self.config.hosts)}")
-        print(f"  Routing: {self.config.routing_strategy}")
-        print(f"  Gateway: {self.config.gateway_host}:{self.config.gateway_port}")
-        print()
+        self.logger.info("Initialized with configuration:")
+        self.logger.info(f"  Ray workers: {self.config.ray_workers}")
+        self.logger.info(f"  Dask workers: {self.config.dask_workers}")
+        self.logger.info(f"  Hosts: {', '.join(self.config.hosts)}")
+        self.logger.info(f"  Routing: {self.config.routing_strategy}")
+        self.logger.info(f"  Gateway: {self.config.gateway_host}:{self.config.gateway_port}")
 
     def _initialize_clusters(self):
         """Initialize Ray and Dask clusters."""
         if self._initialized:
-            print("[SOLLOL] Already initialized, skipping...")
+            self.logger.debug("Already initialized, skipping...")
             return
 
-        print("[SOLLOL] Initializing clusters...")
+        self.logger.info("Initializing clusters...")
 
         # Create temporary hosts file from config
         import tempfile
@@ -111,7 +118,7 @@ class SOLLOL:
             )
 
             self._initialized = True
-            print("[SOLLOL] Clusters initialized successfully\n")
+            self.logger.info("Clusters initialized successfully")
 
         finally:
             # Clean up temporary hosts file
@@ -136,13 +143,13 @@ class SOLLOL:
             ```
         """
         if self._running:
-            print("[SOLLOL] Already running")
+            self.logger.debug("Already running")
             return
 
         # Initialize clusters if not already done
         self._initialize_clusters()
 
-        print("[SOLLOL] Starting gateway...")
+        self.logger.info("Starting gateway...")
 
         if blocking:
             # Run gateway in current thread (blocks)
@@ -155,10 +162,9 @@ class SOLLOL:
             )
             self._gateway_thread.start()
             self._running = True
-            print(f"[SOLLOL] Gateway started in background")
-            print(f"[SOLLOL] API available at http://localhost:{self.config.gateway_port}")
-            print(f"[SOLLOL] Metrics available at http://localhost:{self.config.metrics_port}/metrics")
-            print()
+            self.logger.info(f"Gateway started in background")
+            self.logger.info(f"API available at http://localhost:{self.config.gateway_port}")
+            self.logger.info(f"Metrics available at http://localhost:{self.config.metrics_port}/metrics")
 
     def _start_gateway(self):
         """Internal method to start the FastAPI gateway."""
@@ -184,17 +190,17 @@ class SOLLOL:
             - Ray: pkill -f "ray::"
             - Dask: pkill -f "dask"
         """
-        print("[SOLLOL] Stopping orchestration...")
+        self.logger.info("Stopping orchestration...")
         self._running = False
 
         if self._gateway_thread and self._gateway_thread.is_alive():
-            print("[SOLLOL] Gateway thread is running in background")
-            print("[SOLLOL] Note: Gateway cannot be stopped gracefully in background mode")
-            print("[SOLLOL] To stop completely, restart your application or kill processes:")
-            print("  pkill -f 'ray::'")
-            print("  pkill -f 'dask'")
+            self.logger.warning("Gateway thread is running in background")
+            self.logger.warning("Note: Gateway cannot be stopped gracefully in background mode")
+            self.logger.warning("To stop completely, restart your application or kill processes:")
+            self.logger.warning("  pkill -f 'ray::'")
+            self.logger.warning("  pkill -f 'dask'")
 
-        print("[SOLLOL] Stopped")
+        self.logger.info("Stopped")
 
     def update_config(self, **kwargs):
         """
@@ -215,14 +221,14 @@ class SOLLOL:
         Note: Some configuration changes (like ray_workers, dask_workers) require
         restarting SOLLOL to take effect.
         """
-        print("[SOLLOL] Updating configuration...")
+        self.logger.info("Updating configuration...")
 
         # Update config object
         for key, value in kwargs.items():
             if hasattr(self.config, key):
                 old_value = getattr(self.config, key)
                 setattr(self.config, key, value)
-                print(f"  {key}: {old_value} -> {value}")
+                self.logger.info(f"  {key}: {old_value} -> {value}")
             else:
                 raise KeyError(f"Invalid configuration key: {key}")
 
@@ -235,11 +241,9 @@ class SOLLOL:
             "hosts", "gateway_port", "metrics_port"
         }
         if any(key in restart_required_keys for key in kwargs.keys()):
-            print("\n⚠️  Some changes require restarting SOLLOL to take effect:")
-            print("  sollol.stop()")
-            print("  sollol.start()")
-
-        print()
+            self.logger.warning("\nSome changes require restarting SOLLOL to take effect:")
+            self.logger.warning("  sollol.stop()")
+            self.logger.warning("  sollol.start()")
 
     def get_status(self) -> Dict[str, Any]:
         """

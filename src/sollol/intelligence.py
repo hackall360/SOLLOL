@@ -291,10 +291,17 @@ class IntelligentRouter:
         latency_ms = host_meta.get('latency_ms', 200.0)
         # Latency penalty scales with task priority and is more aggressive for extreme values
         latency_weight = 1.0 + (context.priority / 10.0)  # 1.0 to 2.0
-        # Use exponential penalty for very high latency (>1000ms)
-        if latency_ms > 1000:
+
+        # Reduce penalty for fast local network latency (<200ms)
+        # Anything under 200ms is considered "fast" - minimal penalty
+        if latency_ms < 200:
+            # Gentle penalty for local network latency
+            latency_penalty = (latency_ms / 1000.0) * latency_weight  # Much smaller penalty
+        elif latency_ms > 1000:
+            # Exponential penalty for very high latency
             latency_penalty = (latency_ms / 100.0) * latency_weight
         else:
+            # Standard penalty for medium latency (200-1000ms)
             latency_penalty = min(latency_ms / 100.0, 10.0) * latency_weight
         score /= (1 + latency_penalty)
 
@@ -319,6 +326,18 @@ class IntelligentRouter:
         preferred_tasks = host_meta.get('preferred_task_types', [])
         if context.task_type in preferred_tasks:
             score *= 1.3
+
+        # Factor 6.5: Resource capacity bonus
+        # Prefer nodes with more CPU cores (especially for complex tasks)
+        cpu_count = host_meta.get('cpu_count', 1)
+        if cpu_count > 1:
+            # Bonus scales with CPU count, capped at 1.5x
+            # 4 cores = 1.1x, 8 cores = 1.2x, 16+ cores = 1.4x
+            resource_bonus = min(1.0 + (cpu_count / 20.0), 1.5)
+            score *= resource_bonus
+            # Extra bonus for complex tasks on high-core-count machines
+            if context.complexity == 'complex' and cpu_count >= 8:
+                score *= 1.2  # 20% extra for complex work on powerful nodes
 
         # Factor 7: Resource headroom for estimated duration
         # Penalize if estimated duration is long and host is already loaded

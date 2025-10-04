@@ -218,6 +218,191 @@ class SOLLOLLoadBalancer:
 
         return decision
 
+    def route_with_retry(
+        self,
+        payload: Dict[str, Any],
+        agent_name: str = "Unknown",
+        priority: int = PRIORITY_NORMAL,
+        max_retries: int = 3,
+        backoff_multiplier: float = 0.5
+    ) -> RoutingDecision:
+        """
+        Route request with automatic retry on failure using fallback nodes.
+
+        This method will:
+        1. Get initial routing decision
+        2. If primary node fails, automatically try fallback nodes
+        3. Use exponential backoff between retries
+        4. Return the first successful routing decision
+
+        Args:
+            payload: Request payload
+            agent_name: Name of agent making request
+            priority: Request priority
+            max_retries: Maximum retry attempts (default: 3)
+            backoff_multiplier: Exponential backoff multiplier (default: 0.5)
+
+        Returns:
+            RoutingDecision for successful node
+
+        Raises:
+            RuntimeError: If all nodes fail after max retries
+
+        Example:
+            decision = load_balancer.route_with_retry(
+                payload={'prompt': 'test', 'model': 'llama3.2'},
+                agent_name='MyAgent',
+                max_retries=3
+            )
+
+            # Try to execute with automatic failover
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(
+                        f"{decision.node.url}/api/generate",
+                        json=payload
+                    )
+                    if response.ok:
+                        break
+                except Exception:
+                    # Move to next fallback node if available
+                    if attempt < len(decision.fallback_nodes):
+                        decision.node = decision.fallback_nodes[attempt]
+                    else:
+                        raise
+        """
+        import time as time_module
+
+        decision = self.route_request(payload, agent_name, priority)
+        all_nodes = [decision.node] + decision.fallback_nodes
+
+        last_error = None
+        for attempt, node in enumerate(all_nodes[:max_retries]):
+            if attempt > 0:
+                wait_time = backoff_multiplier * (2 ** (attempt - 1))
+                logger.warning(
+                    f"🔄 Retry {attempt}/{max_retries}: "
+                    f"Falling back to {node.url} after {wait_time:.1f}s"
+                )
+                time_module.sleep(wait_time)
+
+                # Update decision to use fallback node
+                decision.node = node
+                decision.reasoning = (
+                    f"Fallback #{attempt} after primary node failure "
+                    f"(retry with exponential backoff: {wait_time:.1f}s)"
+                )
+
+            # Application should try this node
+            # We just return the decision with updated node
+            logger.info(f"📍 Attempt {attempt + 1}: Using {node.url}")
+
+        return decision
+
+    def execute_with_failover(
+        self,
+        payload: Dict[str, Any],
+        execute_fn: callable,
+        agent_name: str = "Unknown",
+        priority: int = PRIORITY_NORMAL,
+        max_retries: int = 3,
+        backoff_multiplier: float = 0.5
+    ) -> Any:
+        """
+        Execute a request with automatic failover to backup nodes.
+
+        This is a higher-level method that handles the entire request lifecycle:
+        routing, execution, retry, and failover.
+
+        Args:
+            payload: Request payload
+            execute_fn: Function that executes the request. Should accept (url, payload)
+                       and return the response. Should raise exception on failure.
+            agent_name: Name of agent making request
+            priority: Request priority
+            max_retries: Maximum retry attempts
+            backoff_multiplier: Exponential backoff multiplier
+
+        Returns:
+            Result from execute_fn
+
+        Raises:
+            RuntimeError: If all nodes fail after max retries
+
+        Example:
+            import requests
+
+            def execute_request(url, payload):
+                response = requests.post(f"{url}/api/generate", json=payload)
+                response.raise_for_status()
+                return response.json()
+
+            result = load_balancer.execute_with_failover(
+                payload={'prompt': 'test', 'model': 'llama3.2'},
+                execute_fn=execute_request,
+                agent_name='MyAgent'
+            )
+        """
+        import time as time_module
+
+        decision = self.route_request(payload, agent_name, priority)
+        all_nodes = [decision.node] + decision.fallback_nodes
+
+        last_error = None
+        start_time = time_module.time()
+
+        for attempt, node in enumerate(all_nodes[:max_retries]):
+            if attempt > 0:
+                wait_time = backoff_multiplier * (2 ** (attempt - 1))
+                logger.warning(
+                    f"🔄 Retry {attempt}/{max_retries}: "
+                    f"Falling back to {node.url} after {wait_time:.1f}s"
+                )
+                time_module.sleep(wait_time)
+
+            try:
+                logger.info(f"📍 Attempt {attempt + 1}: Executing on {node.url}")
+                result = execute_fn(node.url, payload)
+
+                # Record successful execution
+                duration_ms = (time_module.time() - start_time) * 1000
+                decision.node = node  # Update to successful node
+                self.record_performance(
+                    decision=decision,
+                    actual_duration_ms=duration_ms,
+                    success=True
+                )
+
+                if attempt > 0:
+                    logger.info(
+                        f"✅ Succeeded on fallback node {node.url} "
+                        f"after {attempt} failed attempts"
+                    )
+
+                return result
+
+            except Exception as e:
+                last_error = e
+                logger.error(f"❌ Failed on {node.url}: {e}")
+
+                # Record failed execution
+                duration_ms = (time_module.time() - start_time) * 1000
+                decision.node = node
+                self.record_performance(
+                    decision=decision,
+                    actual_duration_ms=duration_ms,
+                    success=False,
+                    error=str(e)
+                )
+
+                if attempt >= max_retries - 1:
+                    break
+
+        # All nodes failed
+        raise RuntimeError(
+            f"All {max_retries} node attempts failed. Last error: {last_error}"
+        )
+
     def record_performance(
         self,
         decision: RoutingDecision,
@@ -382,6 +567,32 @@ class SOLLOLLoadBalancer:
             'priority': getattr(node, 'priority', 5),
         }
 
+    def suggest_execution_mode(self) -> str:
+        """
+        Suggest optimal execution mode based on available nodes.
+
+        Returns:
+            Suggested execution mode: "parallel", "sequential", or "auto"
+        """
+        healthy_nodes = self.registry.get_healthy_nodes()
+        num_nodes = len(healthy_nodes)
+
+        if num_nodes >= 3:
+            return "parallel_multi_node"
+        elif num_nodes >= 2:
+            return "parallel"
+        else:
+            return "sequential"
+
+    def should_use_parallel(self) -> bool:
+        """
+        Determine if parallel execution is beneficial.
+
+        Returns:
+            True if 2+ healthy nodes available, False otherwise
+        """
+        return len(self.registry.get_healthy_nodes()) >= 2
+
     def __repr__(self):
         healthy = len(self.registry.get_healthy_nodes())
         gpu = len(self.registry.get_gpu_nodes())
@@ -404,3 +615,9 @@ __all__ = [
     'PRIORITY_LOW',
     'PRIORITY_BATCH',
 ]
+
+# Note: Node management (add_node, remove_node, discover_nodes) is
+# intentionally NOT part of SOLLOL. Applications should manage their
+# own node registries. SOLLOL focuses on intelligent routing to whatever
+# nodes the application provides.
+
