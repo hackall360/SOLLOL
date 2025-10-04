@@ -37,11 +37,11 @@ Example:
 
 # Core load balancing
 from sollol.pool import OllamaPool
-from sollol.client import OllamaClient
+from sollol.client import SOLLOLClient
 
 # Distributed inference
 from sollol.hybrid_router import HybridRouter
-from sollol.llama_cpp_rpc import LlamaCppRPCBackend
+from sollol.llama_cpp_rpc import LlamaCppRPCClient, LlamaCppDistributedCluster
 from sollol.llama_cpp_coordinator import LlamaCppCoordinator
 
 # Discovery
@@ -53,14 +53,15 @@ from sollol.rpc_auto_setup import auto_setup_rpc_backends, RPCAutoSetup
 from sollol.sollol import SOLLOL
 from sollol.config import SOLLOLConfig
 
-__version__ = "0.3.0"
+__version__ = "0.3.2"
 __all__ = [
     # Core
     "OllamaPool",
-    "OllamaClient",
+    "SOLLOLClient",
     # Distributed
     "HybridRouter",
-    "LlamaCppRPCBackend",
+    "LlamaCppRPCClient",
+    "LlamaCppDistributedCluster",
     "LlamaCppCoordinator",
     # Discovery & Auto-Setup
     "discover_ollama_nodes",
