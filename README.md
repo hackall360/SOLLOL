@@ -134,7 +134,53 @@ router = HybridRouter(
 
 ## Distributed Inference Setup
 
-### 1. Start RPC Servers (Worker Nodes)
+### Option 1: Zero-Config Auto-Setup (Easiest!)
+
+SOLLOL can automatically setup llama.cpp RPC backends for you:
+
+```python
+from sollol import HybridRouter, OllamaPool
+
+# Everything auto-configures AND auto-setups!
+router = HybridRouter(
+    ollama_pool=OllamaPool.auto_configure(),
+    enable_distributed=True,
+    auto_discover_rpc=True,  # Discover existing RPC servers
+    auto_setup_rpc=True,     # Auto-build & start RPC servers if none found
+    num_rpc_backends=2       # Number of backends to start
+)
+
+# SOLLOL will automatically:
+# 1. Check for running RPC servers
+# 2. If none found, clone llama.cpp
+# 3. Build with RPC support
+# 4. Start RPC servers
+# 5. Configure hybrid routing
+
+# Use it immediately!
+response = await router.route_request(
+    model="llama3.1:405b",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+Or use the standalone auto-setup:
+
+```python
+from sollol import auto_setup_rpc_backends
+
+# Automatically setup RPC backends
+backends = auto_setup_rpc_backends(
+    num_backends=2,      # Start 2 RPC servers
+    auto_build=True      # Build llama.cpp if needed
+)
+print(f"RPC backends ready: {backends}")
+# Output: [{'host': '127.0.0.1', 'port': 50052}, {'host': '127.0.0.1', 'port': 50053}]
+```
+
+### Option 2: Manual Setup (Full Control)
+
+#### 1. Start RPC Servers (Worker Nodes)
 
 On each worker node:
 ```bash
@@ -148,7 +194,7 @@ cmake --build build --config Release -j$(nproc)
 ./build/bin/rpc-server --host 0.0.0.0 --port 50052
 ```
 
-### 2. Use SOLLOL with Auto-Discovery
+#### 2. Use SOLLOL with Auto-Discovery
 
 ```python
 from sollol import HybridRouter, OllamaPool
@@ -186,11 +232,12 @@ response = await router.route_request(
 - `should_use_distributed(model)` - Check if model should use distributed inference
 - `get_stats()` - Get routing statistics
 
-### Discovery
+### Discovery & Auto-Setup
 
 **Functions:**
-- `discover_ollama_nodes(timeout=0.5)` - Discover Ollama nodes
-- `auto_discover_rpc_backends(port=50052)` - Discover llama.cpp RPC backends
+- `discover_ollama_nodes(timeout=0.5)` - Discover Ollama nodes on the network
+- `auto_discover_rpc_backends(port=50052)` - Discover existing llama.cpp RPC backends
+- `auto_setup_rpc_backends(num_backends=1, auto_build=True)` - Auto-setup RPC backends (clone, build, start)
 - `check_rpc_server(host, port, timeout=1.0)` - Check if RPC server is running
 
 ## Environment Variables

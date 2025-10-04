@@ -47,6 +47,7 @@ from sollol.llama_cpp_coordinator import LlamaCppCoordinator
 # Discovery
 from sollol.discovery import discover_ollama_nodes
 from sollol.rpc_discovery import auto_discover_rpc_backends, check_rpc_server
+from sollol.rpc_auto_setup import auto_setup_rpc_backends, RPCAutoSetup
 
 # Legacy support
 from sollol.sollol import SOLLOL
@@ -61,10 +62,12 @@ __all__ = [
     "HybridRouter",
     "LlamaCppRPCBackend",
     "LlamaCppCoordinator",
-    # Discovery
+    # Discovery & Auto-Setup
     "discover_ollama_nodes",
     "auto_discover_rpc_backends",
+    "auto_setup_rpc_backends",
     "check_rpc_server",
+    "RPCAutoSetup",
     # Legacy
     "SOLLOL",
     "SOLLOLConfig",
