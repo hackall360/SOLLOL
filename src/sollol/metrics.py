@@ -50,7 +50,6 @@ _host_stats: Dict[str, Dict] = {}
 
 def init_host_stats(hosts: list):
     """Initialize tracking for each host."""
-    global _host_stats
     for host in hosts:
         _host_stats[host] = {
             "total_requests": 0,

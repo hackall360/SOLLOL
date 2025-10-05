@@ -162,7 +162,7 @@ def fetch_new_docs() -> List[str]:
     In production, this would poll a database or message queue.
     For now, it's a simple placeholder that generates sample docs.
     """
-    global _last_doc_id, _document_queue
+    global _document_queue
 
     # Return queued docs if any
     if _document_queue:
