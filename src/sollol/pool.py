@@ -10,11 +10,13 @@ Features full SynapticLlamas observability:
 - Detailed logging of routing decisions
 """
 
-import threading
 import logging
-import requests
+import threading
 import time
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
+import requests
+
 from .intelligence import IntelligentRouter, get_router
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,7 @@ class OllamaPool:
         self,
         nodes: Optional[List[Dict[str, str]]] = None,
         enable_intelligent_routing: bool = True,
-        exclude_localhost: bool = False
+        exclude_localhost: bool = False,
     ):
         """
         Initialize connection pool with full observability.
@@ -58,11 +60,11 @@ class OllamaPool:
 
         # Enhanced stats tracking with performance metrics
         self.stats = {
-            'total_requests': 0,
-            'successful_requests': 0,
-            'failed_requests': 0,
-            'nodes_used': {},
-            'node_performance': {}  # Track performance per node
+            "total_requests": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "nodes_used": {},
+            "node_performance": {},  # Track performance per node
         }
 
         # Initialize node metadata for intelligent routing
@@ -74,7 +76,7 @@ class OllamaPool:
         )
 
     @classmethod
-    def auto_configure(cls) -> 'OllamaPool':
+    def auto_configure(cls) -> "OllamaPool":
         """
         Create pool with automatic discovery.
 
@@ -106,23 +108,21 @@ class OllamaPool:
         with self._lock:
             for node in self.nodes:
                 node_key = f"{node['host']}:{node['port']}"
-                if node_key not in self.stats['node_performance']:
-                    self.stats['node_performance'][node_key] = {
-                        'host': node_key,
-                        'latency_ms': 0.0,
-                        'success_rate': 1.0,
-                        'total_requests': 0,
-                        'failed_requests': 0,
-                        'available': True,
-                        'cpu_load': 0.5,  # Default assumption
-                        'gpu_free_mem': 0,  # Unknown until checked
-                        'priority': 999  # Default priority
+                if node_key not in self.stats["node_performance"]:
+                    self.stats["node_performance"][node_key] = {
+                        "host": node_key,
+                        "latency_ms": 0.0,
+                        "success_rate": 1.0,
+                        "total_requests": 0,
+                        "failed_requests": 0,
+                        "available": True,
+                        "cpu_load": 0.5,  # Default assumption
+                        "gpu_free_mem": 0,  # Unknown until checked
+                        "priority": 999,  # Default priority
                     }
 
     def _select_node(
-        self,
-        payload: Optional[Dict[str, Any]] = None,
-        priority: int = 5
+        self, payload: Optional[Dict[str, Any]] = None, priority: int = 5
     ) -> tuple[Dict[str, str], Optional[Dict[str, Any]]]:
         """
         Select best node for request using intelligent routing.
@@ -150,21 +150,17 @@ class OllamaPool:
                 context = self.router.analyze_request(payload, priority=priority)
 
                 # Get available hosts metadata
-                available_hosts = list(self.stats['node_performance'].values())
+                available_hosts = list(self.stats["node_performance"].values())
 
                 # Select optimal node
-                selected_host, decision = self.router.select_optimal_node(
-                    context, available_hosts
-                )
+                selected_host, decision = self.router.select_optimal_node(context, available_hosts)
 
                 # Find matching node dict
                 for node in self.nodes:
                     node_key = f"{node['host']}:{node['port']}"
                     if node_key == selected_host:
                         # Log the routing decision
-                        logger.info(
-                            f"🎯 Intelligent routing: {decision['reasoning']}"
-                        )
+                        logger.info(f"🎯 Intelligent routing: {decision['reasoning']}")
                         return node, decision
 
                 # Fallback if not found
@@ -180,11 +176,7 @@ class OllamaPool:
                 return node, None
 
     def _make_request(
-        self,
-        endpoint: str,
-        data: Dict[str, Any],
-        priority: int = 5,
-        timeout: float = 30.0
+        self, endpoint: str, data: Dict[str, Any], priority: int = 5, timeout: float = 30.0
     ) -> Any:
         """
         Make HTTP request to selected node with intelligent routing and performance tracking.
@@ -203,7 +195,7 @@ class OllamaPool:
         """
         # Track request
         with self._lock:
-            self.stats['total_requests'] += 1
+            self.stats["total_requests"] += 1
 
         # Try nodes until one succeeds
         errors = []
@@ -224,11 +216,7 @@ class OllamaPool:
             try:
                 logger.debug(f"Request to {url}")
 
-                response = requests.post(
-                    url,
-                    json=data,
-                    timeout=timeout
-                )
+                response = requests.post(url, json=data, timeout=timeout)
 
                 # Calculate latency
                 latency_ms = (time.time() - start_time) * 1000
@@ -236,28 +224,27 @@ class OllamaPool:
                 if response.status_code == 200:
                     # Success! Update metrics
                     with self._lock:
-                        self.stats['successful_requests'] += 1
-                        self.stats['nodes_used'][node_key] = \
-                            self.stats['nodes_used'].get(node_key, 0) + 1
+                        self.stats["successful_requests"] += 1
+                        self.stats["nodes_used"][node_key] = (
+                            self.stats["nodes_used"].get(node_key, 0) + 1
+                        )
 
                         # Update node performance metrics
-                        perf = self.stats['node_performance'][node_key]
-                        perf['total_requests'] += 1
+                        perf = self.stats["node_performance"][node_key]
+                        perf["total_requests"] += 1
 
                         # Update running average latency
-                        if perf['total_requests'] == 1:
-                            perf['latency_ms'] = latency_ms
+                        if perf["total_requests"] == 1:
+                            perf["latency_ms"] = latency_ms
                         else:
-                            perf['latency_ms'] = (
-                                (perf['latency_ms'] * (perf['total_requests'] - 1) + latency_ms) /
-                                perf['total_requests']
-                            )
+                            perf["latency_ms"] = (
+                                perf["latency_ms"] * (perf["total_requests"] - 1) + latency_ms
+                            ) / perf["total_requests"]
 
                         # Update success rate
-                        perf['success_rate'] = (
-                            (perf['total_requests'] - perf['failed_requests']) /
-                            perf['total_requests']
-                        )
+                        perf["success_rate"] = (
+                            perf["total_requests"] - perf["failed_requests"]
+                        ) / perf["total_requests"]
 
                     # Log performance
                     logger.info(
@@ -267,12 +254,14 @@ class OllamaPool:
                     )
 
                     # Record performance for router learning
-                    if self.router and 'model' in data:
-                        task_type = routing_decision.get('task_type', 'generation') if routing_decision else 'generation'
+                    if self.router and "model" in data:
+                        task_type = (
+                            routing_decision.get("task_type", "generation")
+                            if routing_decision
+                            else "generation"
+                        )
                         self.router.record_performance(
-                            task_type=task_type,
-                            model=data['model'],
-                            actual_duration_ms=latency_ms
+                            task_type=task_type, model=data["model"], actual_duration_ms=latency_ms
                         )
 
                     return response.json()
@@ -288,30 +277,26 @@ class OllamaPool:
 
         # All nodes failed
         with self._lock:
-            self.stats['failed_requests'] += 1
+            self.stats["failed_requests"] += 1
 
-        raise RuntimeError(
-            f"All Ollama nodes failed. Errors: {'; '.join(errors)}"
-        )
+        raise RuntimeError(f"All Ollama nodes failed. Errors: {'; '.join(errors)}")
 
     def _record_failure(self, node_key: str, latency_ms: float):
         """Record a failed request for a node."""
         with self._lock:
-            if node_key in self.stats['node_performance']:
-                perf = self.stats['node_performance'][node_key]
-                perf['failed_requests'] += 1
-                perf['total_requests'] += 1
+            if node_key in self.stats["node_performance"]:
+                perf = self.stats["node_performance"][node_key]
+                perf["failed_requests"] += 1
+                perf["total_requests"] += 1
 
                 # Update success rate
-                if perf['total_requests'] > 0:
-                    perf['success_rate'] = (
-                        (perf['total_requests'] - perf['failed_requests']) /
-                        perf['total_requests']
-                    )
+                if perf["total_requests"] > 0:
+                    perf["success_rate"] = (
+                        perf["total_requests"] - perf["failed_requests"]
+                    ) / perf["total_requests"]
 
                 logger.warning(
-                    f"❌ Request failed: {node_key} "
-                    f"(success_rate: {perf['success_rate']:.1%})"
+                    f"❌ Request failed: {node_key} " f"(success_rate: {perf['success_rate']:.1%})"
                 )
 
     def chat(
@@ -320,7 +305,7 @@ class OllamaPool:
         messages: List[Dict[str, str]],
         stream: bool = False,
         priority: int = 5,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Chat completion with intelligent routing and observability.
@@ -338,22 +323,12 @@ class OllamaPool:
         if stream:
             raise NotImplementedError("Streaming not supported yet")
 
-        data = {
-            'model': model,
-            'messages': messages,
-            'stream': False,
-            **kwargs
-        }
+        data = {"model": model, "messages": messages, "stream": False, **kwargs}
 
-        return self._make_request('/api/chat', data, priority=priority)
+        return self._make_request("/api/chat", data, priority=priority)
 
     def generate(
-        self,
-        model: str,
-        prompt: str,
-        stream: bool = False,
-        priority: int = 5,
-        **kwargs
+        self, model: str, prompt: str, stream: bool = False, priority: int = 5, **kwargs
     ) -> Dict[str, Any]:
         """
         Generate text with intelligent routing and observability.
@@ -371,22 +346,11 @@ class OllamaPool:
         if stream:
             raise NotImplementedError("Streaming not supported yet")
 
-        data = {
-            'model': model,
-            'prompt': prompt,
-            'stream': False,
-            **kwargs
-        }
+        data = {"model": model, "prompt": prompt, "stream": False, **kwargs}
 
-        return self._make_request('/api/generate', data, priority=priority)
+        return self._make_request("/api/generate", data, priority=priority)
 
-    def embed(
-        self,
-        model: str,
-        input: str,
-        priority: int = 5,
-        **kwargs
-    ) -> Dict[str, Any]:
+    def embed(self, model: str, input: str, priority: int = 5, **kwargs) -> Dict[str, Any]:
         """
         Generate embeddings with intelligent routing and observability.
 
@@ -399,22 +363,18 @@ class OllamaPool:
         Returns:
             Embedding response dict
         """
-        data = {
-            'model': model,
-            'input': input,
-            **kwargs
-        }
+        data = {"model": model, "input": input, **kwargs}
 
-        return self._make_request('/api/embed', data, priority=priority)
+        return self._make_request("/api/embed", data, priority=priority)
 
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive pool statistics with performance metrics."""
         with self._lock:
             return {
                 **self.stats,
-                'nodes_configured': len(self.nodes),
-                'nodes': [f"{n['host']}:{n['port']}" for n in self.nodes],
-                'intelligent_routing_enabled': self.enable_intelligent_routing
+                "nodes_configured": len(self.nodes),
+                "nodes": [f"{n['host']}:{n['port']}" for n in self.nodes],
+                "intelligent_routing_enabled": self.enable_intelligent_routing,
             }
 
     def add_node(self, host: str, port: int = 11434):

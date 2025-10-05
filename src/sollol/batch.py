@@ -1,12 +1,16 @@
 """
 Dask batch processing with performance-aware routing to OLLOL nodes.
 """
-from dask import delayed
+
 import asyncio
-import httpx
 import time
+
+import httpx
+from dask import delayed
+
 from sollol.memory import get_best_host
 from sollol.metrics import record_host_request
+
 
 def remote_embed(doc: str, model: str = "nomic-embed-text") -> dict:
     """
@@ -31,8 +35,7 @@ def remote_embed(doc: str, model: str = "nomic-embed-text") -> dict:
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
-                    f"http://{host}/api/embeddings",
-                    json={"model": model, "prompt": doc}
+                    f"http://{host}/api/embeddings", json={"model": model, "prompt": doc}
                 )
                 resp.raise_for_status()
                 success = True
@@ -44,6 +47,7 @@ def remote_embed(doc: str, model: str = "nomic-embed-text") -> dict:
             record_host_request(host, latency_ms, success)
 
     return asyncio.run(_embed())
+
 
 def remote_chat(payload: dict) -> dict:
     """
@@ -66,10 +70,7 @@ def remote_chat(payload: dict) -> dict:
 
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
-                resp = await client.post(
-                    f"http://{host}/api/chat",
-                    json=payload
-                )
+                resp = await client.post(f"http://{host}/api/chat", json=payload)
                 resp.raise_for_status()
                 success = True
                 return resp.json()
@@ -80,6 +81,7 @@ def remote_chat(payload: dict) -> dict:
             record_host_request(host, latency_ms, success)
 
     return asyncio.run(_chat())
+
 
 def embed_documents(docs: list, model: str = "nomic-embed-text") -> list:
     """
@@ -96,6 +98,7 @@ def embed_documents(docs: list, model: str = "nomic-embed-text") -> list:
     """
     tasks = [delayed(remote_embed)(doc, model) for doc in docs]
     return tasks
+
 
 def run_batch_pipeline(dask_client, docs: list, model: str = "nomic-embed-text"):
     """

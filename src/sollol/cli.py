@@ -1,21 +1,23 @@
 """
 SOLLOL CLI - One-command startup for performance-aware Ollama load balancing.
 """
-import typer
+
 import logging
+
+import typer
+
+from .cluster import start_dask, start_ray
 from .gateway import start_api
-from .cluster import start_ray, start_dask
 
 app = typer.Typer(
-    name="sollol",
-    help="SOLLOL - Super Ollama Load Balancer with performance-aware routing"
+    name="sollol", help="SOLLOL - Super Ollama Load Balancer with performance-aware routing"
 )
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
 
 @app.command()
 def up(
@@ -23,11 +25,15 @@ def up(
     dask_workers: int = typer.Option(2, help="Number of Dask workers for batch processing"),
     hosts: str = typer.Option("config/hosts.txt", help="Path to OLLOL hosts configuration file"),
     port: int = typer.Option(8000, help="Port for FastAPI gateway"),
-    dask_scheduler: str = typer.Option(None, help="External Dask scheduler address (e.g., tcp://10.0.0.1:8786)"),
+    dask_scheduler: str = typer.Option(
+        None, help="External Dask scheduler address (e.g., tcp://10.0.0.1:8786)"
+    ),
     autobatch: bool = typer.Option(True, help="Enable autonomous batch processing"),
     autobatch_interval: int = typer.Option(60, help="Seconds between autobatch cycles"),
     adaptive_metrics: bool = typer.Option(True, help="Enable adaptive metrics feedback loop"),
-    adaptive_metrics_interval: int = typer.Option(30, help="Seconds between adaptive metrics updates"),
+    adaptive_metrics_interval: int = typer.Option(
+        30, help="Seconds between adaptive metrics updates"
+    ),
 ):
     """
     Start SOLLOL with Ray + Dask + FastAPI gateway.
@@ -64,8 +70,9 @@ def up(
         enable_autobatch=autobatch,
         autobatch_interval=autobatch_interval,
         enable_adaptive_metrics=adaptive_metrics,
-        adaptive_metrics_interval=adaptive_metrics_interval
+        adaptive_metrics_interval=adaptive_metrics_interval,
     )
+
 
 @app.command()
 def down():
@@ -80,6 +87,7 @@ def down():
     logger.info("   To stop Ray: pkill -f 'ray::'")
     logger.info("   To stop Dask: pkill -f 'dask'")
 
+
 @app.command()
 def status():
     """
@@ -89,6 +97,7 @@ def status():
     logger.info("   Gateway: http://localhost:8000/api/health")
     logger.info("   Metrics: http://localhost:9090/metrics")
     logger.info("   Stats: http://localhost:8000/api/stats")
+
 
 if __name__ == "__main__":
     app()

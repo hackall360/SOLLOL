@@ -4,11 +4,13 @@ RPC Backend Discovery - Auto-detect llama.cpp RPC servers on the network
 Similar to Ollama discovery, this module scans the network for running
 RPC servers (default port: 50052).
 """
-import socket
+
 import asyncio
 import logging
-from typing import List, Dict, Any
+import socket
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List
+
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -37,9 +39,7 @@ def check_rpc_server(host: str, port: int = 50052, timeout: float = 1.0) -> bool
 
 
 def discover_rpc_backends(
-    cidr: str = None,
-    port: int = 50052,
-    timeout: float = 1.0
+    cidr: str = None, port: int = 50052, timeout: float = 1.0
 ) -> List[Dict[str, Any]]:
     """
     Discover RPC backends on the network.
@@ -74,17 +74,14 @@ def discover_rpc_backends(
 
     # Scan in parallel
     with ThreadPoolExecutor(max_workers=50) as executor:
-        futures = {
-            executor.submit(check_rpc_server, ip, port, timeout): ip
-            for ip in ips
-        }
+        futures = {executor.submit(check_rpc_server, ip, port, timeout): ip for ip in ips}
 
         for future in futures:
             ip = futures[future]
             try:
                 if future.result():
                     # Skip localhost - coordinator runs on same machine, no distribution benefit
-                    if ip in ['127.0.0.1', 'localhost']:
+                    if ip in ["127.0.0.1", "localhost"]:
                         continue
                     logger.info(f"   ✅ Found RPC server: {ip}:{port}")
                     backends.append({"host": ip, "port": port})
@@ -128,6 +125,7 @@ def _cidr_to_ips(cidr: str) -> List[str]:
         List of IP addresses in the range
     """
     import ipaddress
+
     return [str(ip) for ip in ipaddress.IPv4Network(cidr, strict=False)]
 
 

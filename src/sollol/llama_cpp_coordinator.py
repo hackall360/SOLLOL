@@ -18,11 +18,12 @@ We manage starting the coordinator and intelligently selecting healthy RPC backe
 """
 
 import asyncio
-import subprocess
 import logging
-import httpx
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
+import subprocess
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+import httpx
 
 if TYPE_CHECKING:
     from sollol.rpc_registry import RPCBackendRegistry
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RPCBackend:
     """Configuration for an RPC backend node."""
+
     host: str
     port: int = 50052
 
@@ -71,7 +73,7 @@ class LlamaCppCoordinator:
         port: int = 8080,
         n_gpu_layers: int = 0,  # Use 0 for RPC - distributes across CPU nodes
         ctx_size: int = 2048,
-        rpc_registry: Optional['RPCBackendRegistry'] = None
+        rpc_registry: Optional["RPCBackendRegistry"] = None,
     ):
         """
         Initialize coordinator.
@@ -116,10 +118,7 @@ class LlamaCppCoordinator:
         logger.info(f"Using {len(healthy)}/{len(self.rpc_backends)} healthy RPC backends")
 
         # Convert registry backends to RPCBackend objects
-        return [
-            RPCBackend(host=b.host, port=b.port)
-            for b in healthy
-        ]
+        return [RPCBackend(host=b.host, port=b.port) for b in healthy]
 
     async def start(self):
         """
@@ -150,12 +149,18 @@ class LlamaCppCoordinator:
         # llama.cpp automatically splits layers across RPC backends
         cmd = [
             "llama-server",
-            "--model", self.model_path,
-            "--host", self.host,
-            "--port", str(self.port),
-            "--rpc", rpc_addresses,
-            "--gpu-layers", "0",  # CPU-only for RPC distribution
-            "--ctx-size", str(self.ctx_size),
+            "--model",
+            self.model_path,
+            "--host",
+            self.host,
+            "--port",
+            str(self.port),
+            "--rpc",
+            rpc_addresses,
+            "--gpu-layers",
+            "0",  # CPU-only for RPC distribution
+            "--ctx-size",
+            str(self.ctx_size),
         ]
 
         logger.info(f"Starting llama-server coordinator: {' '.join(cmd)}")
@@ -164,10 +169,7 @@ class LlamaCppCoordinator:
             # Log llama-server output to file to avoid blocking on filled buffers
             log_file = open("/tmp/llama-server.log", "w")
             self.process = subprocess.Popen(
-                cmd,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                text=True
+                cmd, stdout=log_file, stderr=subprocess.STDOUT, text=True
             )
 
             # Wait for server to be ready
@@ -188,9 +190,7 @@ class LlamaCppCoordinator:
 
         while True:
             try:
-                response = await self.http_client.get(
-                    f"http://{self.host}:{self.port}/health"
-                )
+                response = await self.http_client.get(f"http://{self.host}:{self.port}/health")
                 if response.status_code == 200:
                     return
             except:
@@ -202,11 +202,7 @@ class LlamaCppCoordinator:
             await asyncio.sleep(0.5)
 
     async def generate(
-        self,
-        prompt: str,
-        max_tokens: int = 512,
-        temperature: float = 0.7,
-        **kwargs
+        self, prompt: str, max_tokens: int = 512, temperature: float = 0.7, **kwargs
     ) -> Dict[str, Any]:
         """
         Generate text using distributed inference.
@@ -225,12 +221,11 @@ class LlamaCppCoordinator:
             "n_predict": max_tokens,
             "temperature": temperature,
             "stream": False,
-            **kwargs
+            **kwargs,
         }
 
         response = await self.http_client.post(
-            f"http://{self.host}:{self.port}/completion",
-            json=payload
+            f"http://{self.host}:{self.port}/completion", json=payload
         )
         response.raise_for_status()
 
@@ -241,7 +236,7 @@ class LlamaCppCoordinator:
         messages: List[Dict[str, str]],
         max_tokens: int = 512,
         temperature: float = 0.7,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Chat completion using distributed inference.
@@ -260,12 +255,11 @@ class LlamaCppCoordinator:
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": False,
-            **kwargs
+            **kwargs,
         }
 
         response = await self.http_client.post(
-            f"http://{self.host}:{self.port}/v1/chat/completions",
-            json=payload
+            f"http://{self.host}:{self.port}/v1/chat/completions", json=payload
         )
         response.raise_for_status()
 
@@ -293,9 +287,7 @@ class LlamaCppCoordinator:
 
 
 async def start_rpc_backend(
-    host: str = "0.0.0.0",
-    port: int = 50052,
-    mem_mb: int = 2048
+    host: str = "0.0.0.0", port: int = 50052, mem_mb: int = 2048
 ) -> subprocess.Popen:
     """
     Start an RPC backend server on a node.
@@ -313,21 +305,11 @@ async def start_rpc_backend(
     Returns:
         Process handle
     """
-    cmd = [
-        "rpc-server",
-        "--host", host,
-        "--port", str(port),
-        "--mem", str(mem_mb)
-    ]
+    cmd = ["rpc-server", "--host", host, "--port", str(port), "--mem", str(mem_mb)]
 
     logger.info(f"Starting RPC backend: {' '.join(cmd)}")
 
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     # Give it a moment to start
     await asyncio.sleep(1)

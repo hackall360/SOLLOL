@@ -37,23 +37,25 @@ Usage:
         success=response.ok
     )
 """
+
 import logging
 import time
-from typing import List, Optional, Dict, Any, Protocol
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Protocol
+
+from sollol.adapters import MetricsCollector, PerformanceMemory
 
 # Import SOLLOL core modules
 from sollol.intelligence import IntelligentRouter, TaskContext
 from sollol.prioritization import (
-    PriorityQueue,
+    PRIORITY_BATCH,
     PRIORITY_CRITICAL,
     PRIORITY_HIGH,
-    PRIORITY_NORMAL,
     PRIORITY_LOW,
-    PRIORITY_BATCH
+    PRIORITY_NORMAL,
+    PriorityQueue,
 )
-from sollol.adapters import PerformanceMemory, MetricsCollector
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,7 @@ logger = logging.getLogger(__name__)
 # Protocol for node objects - applications can use any object that matches this
 class NodeProtocol(Protocol):
     """Protocol that node objects must implement."""
+
     url: str
     is_healthy: bool
 
@@ -84,6 +87,7 @@ class NodeRegistryProtocol(Protocol):
 @dataclass
 class RoutingDecision:
     """Complete routing decision with reasoning and metadata."""
+
     node: NodeProtocol
     task_context: TaskContext
     decision_score: float
@@ -125,10 +129,7 @@ class SOLLOLLoadBalancer:
         logger.info("🚀 SOLLOL Load Balancer initialized with intelligent routing")
 
     def route_request(
-        self,
-        payload: Dict[str, Any],
-        agent_name: str = "Unknown",
-        priority: int = PRIORITY_NORMAL
+        self, payload: Dict[str, Any], agent_name: str = "Unknown", priority: int = PRIORITY_NORMAL
     ) -> RoutingDecision:
         """
         Route a request using SOLLOL's intelligent routing engine.
@@ -170,33 +171,24 @@ class SOLLOLLoadBalancer:
         )
 
         # Step 5: Find the node object for the selected host
-        selected_node = next(
-            (node for node in healthy_nodes if node.url == selected_host),
-            None
-        )
+        selected_node = next((node for node in healthy_nodes if node.url == selected_host), None)
 
         if not selected_node:
             # Fallback to first healthy node
             selected_node = healthy_nodes[0]
-            decision_metadata = {
-                'score': 50.0,
-                'reasoning': "Fallback to first available node"
-            }
+            decision_metadata = {"score": 50.0, "reasoning": "Fallback to first available node"}
 
         # Step 6: Prepare fallback nodes
-        fallback_nodes = [
-            node for node in healthy_nodes
-            if node.url != selected_node.url
-        ]
+        fallback_nodes = [node for node in healthy_nodes if node.url != selected_node.url]
 
         # Step 7: Create routing decision
         decision = RoutingDecision(
             node=selected_node,
             task_context=context,
-            decision_score=decision_metadata.get('score', 0.0),
-            reasoning=decision_metadata.get('reasoning', 'Intelligent routing'),
+            decision_score=decision_metadata.get("score", 0.0),
+            reasoning=decision_metadata.get("reasoning", "Intelligent routing"),
             timestamp=datetime.now(),
-            fallback_nodes=fallback_nodes
+            fallback_nodes=fallback_nodes,
         )
 
         # Step 8: Record metrics
@@ -207,7 +199,7 @@ class SOLLOLLoadBalancer:
             priority=priority,
             selected_node=selected_node.url,
             score=decision.decision_score,
-            routing_time_ms=routing_time
+            routing_time_ms=routing_time,
         )
 
         logger.info(
@@ -224,7 +216,7 @@ class SOLLOLLoadBalancer:
         agent_name: str = "Unknown",
         priority: int = PRIORITY_NORMAL,
         max_retries: int = 3,
-        backoff_multiplier: float = 0.5
+        backoff_multiplier: float = 0.5,
     ) -> RoutingDecision:
         """
         Route request with automatic retry on failure using fallback nodes.
@@ -306,7 +298,7 @@ class SOLLOLLoadBalancer:
         agent_name: str = "Unknown",
         priority: int = PRIORITY_NORMAL,
         max_retries: int = 3,
-        backoff_multiplier: float = 0.5
+        backoff_multiplier: float = 0.5,
     ) -> Any:
         """
         Execute a request with automatic failover to backup nodes.
@@ -368,9 +360,7 @@ class SOLLOLLoadBalancer:
                 duration_ms = (time_module.time() - start_time) * 1000
                 decision.node = node  # Update to successful node
                 self.record_performance(
-                    decision=decision,
-                    actual_duration_ms=duration_ms,
-                    success=True
+                    decision=decision, actual_duration_ms=duration_ms, success=True
                 )
 
                 if attempt > 0:
@@ -389,26 +379,21 @@ class SOLLOLLoadBalancer:
                 duration_ms = (time_module.time() - start_time) * 1000
                 decision.node = node
                 self.record_performance(
-                    decision=decision,
-                    actual_duration_ms=duration_ms,
-                    success=False,
-                    error=str(e)
+                    decision=decision, actual_duration_ms=duration_ms, success=False, error=str(e)
                 )
 
                 if attempt >= max_retries - 1:
                     break
 
         # All nodes failed
-        raise RuntimeError(
-            f"All {max_retries} node attempts failed. Last error: {last_error}"
-        )
+        raise RuntimeError(f"All {max_retries} node attempts failed. Last error: {last_error}")
 
     def record_performance(
         self,
         decision: RoutingDecision,
         actual_duration_ms: float,
         success: bool,
-        error: Optional[str] = None
+        error: Optional[str] = None,
     ):
         """
         Record actual performance for adaptive learning.
@@ -425,7 +410,7 @@ class SOLLOLLoadBalancer:
             task_type=decision.task_context.task_type,
             model=decision.task_context.model_preference or "unknown",
             duration_ms=actual_duration_ms,
-            success=success
+            success=success,
         )
 
         # Update metrics
@@ -435,13 +420,15 @@ class SOLLOLLoadBalancer:
             task_type=decision.task_context.task_type,
             priority=decision.task_context.priority,
             duration_ms=actual_duration_ms,
-            success=success
+            success=success,
         )
 
         # Calculate prediction accuracy
         predicted_duration = decision.task_context.estimated_duration_ms
         if predicted_duration > 0:
-            accuracy = 1.0 - abs(actual_duration_ms - predicted_duration) / max(actual_duration_ms, predicted_duration)
+            accuracy = 1.0 - abs(actual_duration_ms - predicted_duration) / max(
+                actual_duration_ms, predicted_duration
+            )
             logger.debug(
                 f"📈 Performance recorded: {decision.node.url} "
                 f"(predicted: {predicted_duration:.0f}ms, actual: {actual_duration_ms:.0f}ms, "
@@ -459,20 +446,20 @@ class SOLLOLLoadBalancer:
             Metadata dict for inclusion in response
         """
         return {
-            '_sollol_routing': {
-                'host': decision.node.url,
-                'task_type': decision.task_context.task_type,
-                'complexity': decision.task_context.complexity,
-                'priority': decision.task_context.priority,
-                'estimated_tokens': decision.task_context.estimated_tokens,
-                'requires_gpu': decision.task_context.requires_gpu,
-                'decision_score': decision.decision_score,
-                'reasoning': decision.reasoning,
-                'timestamp': decision.timestamp.isoformat(),
-                'estimated_duration_ms': decision.task_context.estimated_duration_ms,
-                'fallback_nodes_available': len(decision.fallback_nodes),
-                'routing_engine': 'SOLLOL',
-                'version': '1.0.0'
+            "_sollol_routing": {
+                "host": decision.node.url,
+                "task_type": decision.task_context.task_type,
+                "complexity": decision.task_context.complexity,
+                "priority": decision.task_context.priority,
+                "estimated_tokens": decision.task_context.estimated_tokens,
+                "requires_gpu": decision.task_context.requires_gpu,
+                "decision_score": decision.decision_score,
+                "reasoning": decision.reasoning,
+                "timestamp": decision.timestamp.isoformat(),
+                "estimated_duration_ms": decision.task_context.estimated_duration_ms,
+                "fallback_nodes_available": len(decision.fallback_nodes),
+                "routing_engine": "SOLLOL",
+                "version": "1.0.0",
             }
         }
 
@@ -489,28 +476,28 @@ class SOLLOLLoadBalancer:
         all_nodes = list(self.registry.get_healthy_nodes())  # Get all nodes if available
 
         return {
-            'load_balancer': {
-                'type': 'SOLLOL',
-                'version': '1.0.0',
-                'intelligent_routing': True,
-                'priority_queue': True,
-                'adaptive_learning': True,
+            "load_balancer": {
+                "type": "SOLLOL",
+                "version": "1.0.0",
+                "intelligent_routing": True,
+                "priority_queue": True,
+                "adaptive_learning": True,
             },
-            'nodes': {
-                'healthy': len(healthy_nodes),
-                'gpu': len(gpu_nodes),
+            "nodes": {
+                "healthy": len(healthy_nodes),
+                "gpu": len(gpu_nodes),
             },
-            'metrics': self.metrics.get_summary(),
-            'performance_memory': {
-                'tracked_executions': len(self.memory.history),
-                'unique_task_types': len(set(h['task_type'] for h in self.memory.history)),
-                'unique_models': len(set(h['model'] for h in self.memory.history)),
+            "metrics": self.metrics.get_summary(),
+            "performance_memory": {
+                "tracked_executions": len(self.memory.history),
+                "unique_task_types": len(set(h["task_type"] for h in self.memory.history)),
+                "unique_models": len(set(h["model"] for h in self.memory.history)),
             },
-            'queue': {
-                'depth': len(self.priority_queue.queue),
-                'total_queued': self.priority_queue.total_queued,
-                'total_processed': self.priority_queue.total_processed,
-            }
+            "queue": {
+                "depth": len(self.priority_queue.queue),
+                "total_queued": self.priority_queue.total_queued,
+                "total_processed": self.priority_queue.total_processed,
+            },
         }
 
     def _node_to_host_metadata(self, node: NodeProtocol) -> Dict[str, Any]:
@@ -528,43 +515,42 @@ class SOLLOLLoadBalancer:
         gpu_memory_mb = 0
         cpu_count = 1
 
-        if hasattr(node, 'capabilities') and node.capabilities:
-            has_gpu = getattr(node.capabilities, 'has_gpu', False)
-            gpu_memory_mb = getattr(node.capabilities, 'gpu_memory_mb', 0)
-            cpu_count = getattr(node.capabilities, 'cpu_count', 1)
+        if hasattr(node, "capabilities") and node.capabilities:
+            has_gpu = getattr(node.capabilities, "has_gpu", False)
+            gpu_memory_mb = getattr(node.capabilities, "gpu_memory_mb", 0)
+            cpu_count = getattr(node.capabilities, "cpu_count", 1)
 
         # Extract metrics if available
-        current_load = node.calculate_load_score() if hasattr(node, 'calculate_load_score') else 50.0
+        current_load = (
+            node.calculate_load_score() if hasattr(node, "calculate_load_score") else 50.0
+        )
         total_requests = 0
         successful_requests = 0
         avg_latency = 0.0
 
-        if hasattr(node, 'metrics') and node.metrics:
-            total_requests = getattr(node.metrics, 'total_requests', 0)
-            successful_requests = getattr(node.metrics, 'successful_requests', 0)
-            avg_latency = getattr(node.metrics, 'avg_latency', 0.0)
+        if hasattr(node, "metrics") and node.metrics:
+            total_requests = getattr(node.metrics, "total_requests", 0)
+            successful_requests = getattr(node.metrics, "successful_requests", 0)
+            avg_latency = getattr(node.metrics, "avg_latency", 0.0)
 
-        success_rate = (
-            successful_requests / total_requests
-            if total_requests > 0 else 1.0
-        )
+        success_rate = successful_requests / total_requests if total_requests > 0 else 1.0
 
         return {
-            'url': node.url,
-            'host': node.url,
-            'health': 'healthy' if node.is_healthy else 'unhealthy',
-            'capabilities': {
-                'has_gpu': has_gpu,
-                'gpu_memory_mb': gpu_memory_mb,
-                'cpu_count': cpu_count,
+            "url": node.url,
+            "host": node.url,
+            "health": "healthy" if node.is_healthy else "unhealthy",
+            "capabilities": {
+                "has_gpu": has_gpu,
+                "gpu_memory_mb": gpu_memory_mb,
+                "cpu_count": cpu_count,
             },
-            'metrics': {
-                'current_load': current_load,
-                'total_requests': total_requests,
-                'success_rate': success_rate,
-                'avg_latency_ms': avg_latency,
+            "metrics": {
+                "current_load": current_load,
+                "total_requests": total_requests,
+                "success_rate": success_rate,
+                "avg_latency_ms": avg_latency,
             },
-            'priority': getattr(node, 'priority', 5),
+            "priority": getattr(node, "priority", 5),
         }
 
     def suggest_execution_mode(self) -> str:
@@ -605,19 +591,18 @@ class SOLLOLLoadBalancer:
 
 # Convenience exports
 __all__ = [
-    'SOLLOLLoadBalancer',
-    'RoutingDecision',
-    'NodeProtocol',
-    'NodeRegistryProtocol',
-    'PRIORITY_CRITICAL',
-    'PRIORITY_HIGH',
-    'PRIORITY_NORMAL',
-    'PRIORITY_LOW',
-    'PRIORITY_BATCH',
+    "SOLLOLLoadBalancer",
+    "RoutingDecision",
+    "NodeProtocol",
+    "NodeRegistryProtocol",
+    "PRIORITY_CRITICAL",
+    "PRIORITY_HIGH",
+    "PRIORITY_NORMAL",
+    "PRIORITY_LOW",
+    "PRIORITY_BATCH",
 ]
 
 # Note: Node management (add_node, remove_node, discover_nodes) is
 # intentionally NOT part of SOLLOL. Applications should manage their
 # own node registries. SOLLOL focuses on intelligent routing to whatever
 # nodes the application provides.
-

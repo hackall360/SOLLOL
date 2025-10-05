@@ -2,17 +2,17 @@
 Autonomous batch processing pipeline for SOLLOL.
 Continuously monitors for new documents and schedules embeddings.
 """
+
 import asyncio
 from datetime import datetime
 from typing import Optional
+
 from sollol.batch import run_batch_pipeline
 from sollol.memory import fetch_new_docs
 
+
 async def autobatch_loop(
-    dask_client,
-    interval_sec: int = 60,
-    min_batch_size: int = 1,
-    max_batch_size: int = 100
+    dask_client, interval_sec: int = 60, min_batch_size: int = 1, max_batch_size: int = 100
 ):
     """
     Autonomous batch processing loop.
@@ -55,12 +55,10 @@ async def autobatch_loop(
                 )
 
         except Exception as e:
-            print(
-                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                f"❌ Autobatch error: {e}"
-            )
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] " f"❌ Autobatch error: {e}")
 
         await asyncio.sleep(interval_sec)
+
 
 async def manual_batch_job(dask_client, docs: list):
     """

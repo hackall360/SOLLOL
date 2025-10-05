@@ -12,18 +12,21 @@ Manages Ollama nodes with:
 
 This makes SOLLOL a complete replacement for distributed Ollama deployments.
 """
+
+import concurrent.futures
 import json
 import logging
 import socket
-import concurrent.futures
-from typing import List, Dict, Optional, Set, Union
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from typing import Dict, List, Optional, Set, Union
+
 import requests
 
-# Import compatible OllamaNode implementation
-from sollol.ollama_node import OllamaNode, NodeCapabilities, NodeMetrics
 from sollol.node_cluster import NodeCluster, needs_partitioning
+
+# Import compatible OllamaNode implementation
+from sollol.ollama_node import NodeCapabilities, NodeMetrics, OllamaNode
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +50,7 @@ class NodeRegistry:
         self._health_check_interval = 30  # seconds
 
     def add_node(
-        self,
-        url: str,
-        name: Optional[str] = None,
-        priority: int = 5,
-        check_health: bool = True
+        self, url: str, name: Optional[str] = None, priority: int = 5, check_health: bool = True
     ) -> OllamaNode:
         """
         Add a node to the registry.
@@ -69,9 +68,9 @@ class NodeRegistry:
             ValueError: If node already exists or is unhealthy
         """
         # Normalize URL
-        if not url.startswith('http'):
+        if not url.startswith("http"):
             url = f"http://{url}"
-        if ':' not in url.split('//')[-1]:
+        if ":" not in url.split("//")[-1]:
             url = f"{url}:11434"
 
         # Check if already exists
@@ -81,7 +80,7 @@ class NodeRegistry:
 
         # Generate name if not provided
         if not name:
-            host = url.split('//')[1].split(':')[0]
+            host = url.split("//")[1].split(":")[0]
             name = f"ollama-{host}"
 
         # Create node (class-based OllamaNode)
@@ -123,7 +122,7 @@ class NodeRegistry:
         cidr: str = "192.168.1.0/24",
         port: int = 11434,
         timeout: float = 2.0,
-        max_workers: int = 50
+        max_workers: int = 50,
     ) -> List[OllamaNode]:
         """
         Discover Ollama nodes on the network.
@@ -146,8 +145,7 @@ class NodeRegistry:
         # Parallel scan
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(self._check_ollama_endpoint, ip, port, timeout): ip
-                for ip in ips
+                executor.submit(self._check_ollama_endpoint, ip, port, timeout): ip for ip in ips
             }
 
             for future in concurrent.futures.as_completed(futures):
@@ -200,8 +198,7 @@ class NodeRegistry:
     def get_gpu_nodes(self) -> List[OllamaNode]:
         """Get all nodes with GPU capabilities."""
         return [
-            node for node in self.nodes.values()
-            if node.is_healthy and node.capabilities.has_gpu
+            node for node in self.nodes.values() if node.is_healthy and node.capabilities.has_gpu
         ]
 
     def get_node_by_url(self, url: str) -> Optional[OllamaNode]:
@@ -209,11 +206,7 @@ class NodeRegistry:
         return self.nodes.get(url)
 
     def create_cluster(
-        self,
-        name: str,
-        node_urls: List[str],
-        model: str,
-        partitioning_strategy: str = "even"
+        self, name: str, node_urls: List[str], model: str, partitioning_strategy: str = "even"
     ) -> NodeCluster:
         """
         Create a node cluster for distributed model inference.
@@ -245,10 +238,7 @@ class NodeRegistry:
 
         # Create cluster
         cluster = NodeCluster(
-            name=name,
-            nodes=cluster_nodes,
-            model=model,
-            partitioning_strategy=partitioning_strategy
+            name=name, nodes=cluster_nodes, model=model, partitioning_strategy=partitioning_strategy
         )
 
         self.clusters[name] = cluster
@@ -300,9 +290,7 @@ class NodeRegistry:
         return results
 
     def get_worker_for_model(
-        self,
-        model: str,
-        prefer_cluster: bool = True
+        self, model: str, prefer_cluster: bool = True
     ) -> Union[OllamaNode, NodeCluster, None]:
         """
         Get best worker (node or cluster) for a model.
@@ -354,16 +342,12 @@ class NodeRegistry:
         config = {
             "version": "1.0",
             "nodes": [
-                {
-                    "url": node.url,
-                    "name": node.name,
-                    "priority": node.priority
-                }
+                {"url": node.url, "name": node.name, "priority": node.priority}
                 for node in self.nodes.values()
-            ]
+            ],
         }
 
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             json.dump(config, f, indent=2)
 
         logger.info(f"💾 Saved {len(self.nodes)} nodes to {filepath}")
@@ -379,17 +363,17 @@ class NodeRegistry:
             Number of nodes loaded
         """
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, "r") as f:
                 config = json.load(f)
 
             loaded_count = 0
-            for node_config in config.get('nodes', []):
+            for node_config in config.get("nodes", []):
                 try:
                     self.add_node(
-                        url=node_config['url'],
-                        name=node_config.get('name'),
-                        priority=node_config.get('priority', 5),
-                        check_health=True
+                        url=node_config["url"],
+                        name=node_config.get("name"),
+                        priority=node_config.get("priority", 5),
+                        check_health=True,
                     )
                     loaded_count += 1
                 except Exception as e:
@@ -444,7 +428,7 @@ class NodeRegistry:
             response = requests.get(url, timeout=timeout)
 
             if response.status_code == 200:
-                return True, {'url': f"http://{ip}:{port}"}
+                return True, {"url": f"http://{ip}:{port}"}
         except:
             pass
 
@@ -472,4 +456,4 @@ class NodeRegistry:
 
 
 # Convenience exports
-__all__ = ['NodeRegistry', 'OllamaNode', 'NodeCapabilities', 'NodeMetrics']
+__all__ = ["NodeRegistry", "OllamaNode", "NodeCapabilities", "NodeMetrics"]

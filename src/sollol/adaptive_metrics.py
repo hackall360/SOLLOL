@@ -2,11 +2,15 @@
 Dynamic metrics feedback loop for adaptive routing.
 Automatically updates host performance metadata based on real-time system metrics.
 """
+
 import asyncio
-import httpx
 from datetime import datetime
 from typing import Dict, Optional
-from sollol.memory import update_host_metrics, get_all_hosts_meta, HOSTS_META
+
+import httpx
+
+from sollol.memory import HOSTS_META, get_all_hosts_meta, update_host_metrics
+
 
 async def fetch_host_system_metrics(host: str) -> Optional[Dict]:
     """
@@ -50,6 +54,7 @@ async def fetch_host_system_metrics(host: str) -> Optional[Dict]:
         print(f"⚠️  Failed to fetch metrics from {host}: {e}")
         return None
 
+
 async def update_host_from_system_metrics(host: str):
     """
     Fetch and update metrics for a single host.
@@ -69,6 +74,7 @@ async def update_host_from_system_metrics(host: str):
     else:
         # Mark host as potentially unavailable
         update_host_metrics(host, {"available": False})
+
 
 async def adaptive_metrics_loop(interval_sec: int = 30):
     """
@@ -95,10 +101,7 @@ async def adaptive_metrics_loop(interval_sec: int = 30):
                 continue
 
             # Fetch metrics from all hosts concurrently
-            tasks = [
-                update_host_from_system_metrics(meta["host"])
-                for meta in hosts_meta
-            ]
+            tasks = [update_host_from_system_metrics(meta["host"]) for meta in hosts_meta]
             await asyncio.gather(*tasks, return_exceptions=True)
 
             print(
@@ -107,12 +110,10 @@ async def adaptive_metrics_loop(interval_sec: int = 30):
             )
 
         except Exception as e:
-            print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] "
-                f"❌ Adaptive metrics error: {e}"
-            )
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] " f"❌ Adaptive metrics error: {e}")
 
         await asyncio.sleep(interval_sec)
+
 
 # Integration with Prometheus node_exporter (optional)
 async def fetch_prometheus_node_metrics(host: str, prometheus_port: int = 9100) -> Optional[Dict]:

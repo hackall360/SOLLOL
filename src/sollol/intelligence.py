@@ -7,14 +7,17 @@ This module provides advanced routing decisions based on:
 - Historical performance patterns
 - Resource requirements prediction
 """
-from typing import Dict, Optional, List, Tuple
+
+import re
 from dataclasses import dataclass
 from datetime import datetime
-import re
+from typing import Dict, List, Optional, Tuple
+
 
 @dataclass
 class TaskContext:
     """Rich context about a request for intelligent routing decisions."""
+
     task_type: str  # 'generation', 'embedding', 'classification', 'extraction', etc.
     complexity: str  # 'simple', 'medium', 'complex'
     estimated_tokens: int
@@ -23,6 +26,7 @@ class TaskContext:
     requires_gpu: bool
     estimated_duration_ms: float
     metadata: Dict
+
 
 class IntelligentRouter:
     """
@@ -38,40 +42,40 @@ class IntelligentRouter:
 
     def __init__(self):
         self.task_patterns = {
-            'embedding': [
-                r'embed',
-                r'vector',
-                r'similarity',
-                r'semantic.*search',
+            "embedding": [
+                r"embed",
+                r"vector",
+                r"similarity",
+                r"semantic.*search",
             ],
-            'generation': [
-                r'generat',
-                r'creat',
-                r'writ',
-                r'complet',
-                r'continue',
+            "generation": [
+                r"generat",
+                r"creat",
+                r"writ",
+                r"complet",
+                r"continue",
             ],
-            'classification': [
-                r'classif',
-                r'categor',
-                r'label',
-                r'sentiment',
+            "classification": [
+                r"classif",
+                r"categor",
+                r"label",
+                r"sentiment",
             ],
-            'extraction': [
-                r'extract',
-                r'parse',
-                r'identif',
-                r'find.*entities',
+            "extraction": [
+                r"extract",
+                r"parse",
+                r"identif",
+                r"find.*entities",
             ],
-            'summarization': [
-                r'summar',
-                r'condense',
-                r'brief',
+            "summarization": [
+                r"summar",
+                r"condense",
+                r"brief",
             ],
-            'analysis': [
-                r'analyz',
-                r'evaluat',
-                r'assess',
+            "analysis": [
+                r"analyz",
+                r"evaluat",
+                r"assess",
             ],
         }
 
@@ -92,10 +96,10 @@ class IntelligentRouter:
             Task type string ('generation', 'embedding', 'classification', etc.)
         """
         # Check if it's explicitly an embedding request
-        if 'prompt' in payload and 'model' in payload:
-            model = payload.get('model', '').lower()
-            if 'embed' in model or 'nomic' in model:
-                return 'embedding'
+        if "prompt" in payload and "model" in payload:
+            model = payload.get("model", "").lower()
+            if "embed" in model or "nomic" in model:
+                return "embedding"
 
         # Analyze message content
         content = self._extract_content(payload)
@@ -115,7 +119,7 @@ class IntelligentRouter:
         if scores:
             return max(scores, key=scores.get)
 
-        return 'generation'
+        return "generation"
 
     def estimate_complexity(self, payload: Dict) -> Tuple[str, int]:
         """
@@ -131,17 +135,17 @@ class IntelligentRouter:
 
         # Classify complexity
         if estimated_tokens < 500:
-            complexity = 'simple'
+            complexity = "simple"
         elif estimated_tokens < 2000:
-            complexity = 'medium'
+            complexity = "medium"
         else:
-            complexity = 'complex'
+            complexity = "complex"
 
         # Check for multi-turn conversation
-        if isinstance(payload.get('messages'), list):
-            if len(payload['messages']) > 5:
+        if isinstance(payload.get("messages"), list):
+            if len(payload["messages"]) > 5:
                 # Long conversations are more complex
-                complexity = 'complex' if complexity != 'complex' else complexity
+                complexity = "complex" if complexity != "complex" else complexity
                 estimated_tokens *= 1.5
 
         return complexity, int(estimated_tokens)
@@ -161,16 +165,18 @@ class IntelligentRouter:
         complexity, tokens = self.estimate_complexity(payload)
 
         # Determine if GPU is beneficial
-        requires_gpu = (
-            task_type in ['generation', 'embedding', 'summarization', 'analysis'] and
-            complexity in ['medium', 'complex']
-        )
+        requires_gpu = task_type in [
+            "generation",
+            "embedding",
+            "summarization",
+            "analysis",
+        ] and complexity in ["medium", "complex"]
 
         # Estimate duration based on historical data
         estimated_duration = self._estimate_duration(task_type, tokens)
 
         # Extract model preference if specified
-        model_preference = payload.get('model')
+        model_preference = payload.get("model")
 
         return TaskContext(
             task_type=task_type,
@@ -181,15 +187,13 @@ class IntelligentRouter:
             requires_gpu=requires_gpu,
             estimated_duration_ms=estimated_duration,
             metadata={
-                'analyzed_at': datetime.now().isoformat(),
-                'confidence': 'high' if task_type != 'generation' else 'medium',
-            }
+                "analyzed_at": datetime.now().isoformat(),
+                "confidence": "high" if task_type != "generation" else "medium",
+            },
         )
 
     def select_optimal_node(
-        self,
-        context: TaskContext,
-        available_hosts: List[Dict]
+        self, context: TaskContext, available_hosts: List[Dict]
     ) -> Tuple[str, Dict]:
         """
         Select the optimal OLLOL node for this request based on context.
@@ -202,7 +206,7 @@ class IntelligentRouter:
             (selected_host, routing_decision) tuple with reasoning
         """
         # Filter to only truly available hosts
-        available = [h for h in available_hosts if h.get('available', True)]
+        available = [h for h in available_hosts if h.get("available", True)]
 
         if not available:
             raise ValueError("No available hosts")
@@ -221,18 +225,17 @@ class IntelligentRouter:
 
         # Build decision reasoning
         decision = {
-            'selected_host': best_host['host'],
-            'score': best_score,
-            'task_type': context.task_type,
-            'complexity': context.complexity,
-            'reasoning': self._explain_decision(best_host, context, scored_hosts),
-            'alternatives': [
-                {'host': h['host'], 'score': s}
-                for h, s in scored_hosts[1:3]  # Top 2 alternatives
-            ]
+            "selected_host": best_host["host"],
+            "score": best_score,
+            "task_type": context.task_type,
+            "complexity": context.complexity,
+            "reasoning": self._explain_decision(best_host, context, scored_hosts),
+            "alternatives": [
+                {"host": h["host"], "score": s} for h, s in scored_hosts[1:3]  # Top 2 alternatives
+            ],
         }
 
-        return best_host['host'], decision
+        return best_host["host"], decision
 
     def _score_host_for_context(self, host_meta: Dict, context: TaskContext) -> float:
         """
@@ -250,13 +253,13 @@ class IntelligentRouter:
         score = 100.0  # Start with baseline
 
         # Factor 1: Availability (CRITICAL - binary disqualification)
-        if not host_meta.get('available', True):
+        if not host_meta.get("available", True):
             return 0.0
 
         # Factor 2: Resource adequacy (CRITICAL for resource-intensive tasks)
         # GPU requirements
         if context.requires_gpu:
-            gpu_mem = host_meta.get('gpu_free_mem', 0)
+            gpu_mem = host_meta.get("gpu_free_mem", 0)
             if gpu_mem == 0:
                 # No GPU but task needs it - heavy penalty
                 score *= 0.2  # Still possible but very low priority
@@ -271,24 +274,24 @@ class IntelligentRouter:
                 score *= 2.0
 
         # CPU requirements based on complexity
-        cpu_load = host_meta.get('cpu_load', 0.5)
-        if context.complexity == 'complex':
+        cpu_load = host_meta.get("cpu_load", 0.5)
+        if context.complexity == "complex":
             # Complex tasks need low CPU load
             if cpu_load > 0.8:
                 score *= 0.3  # Very busy host, bad for complex tasks
             elif cpu_load < 0.3:
                 score *= 1.3  # Idle host, great for complex tasks
-        elif context.complexity == 'simple':
+        elif context.complexity == "simple":
             # Simple tasks can tolerate higher load
             if cpu_load > 0.9:
                 score *= 0.7  # Still penalize very busy hosts
             # Don't bonus idle hosts for simple tasks
 
         # Factor 3: Current performance
-        success_rate = host_meta.get('success_rate', 1.0)
+        success_rate = host_meta.get("success_rate", 1.0)
         score *= success_rate  # Direct multiplier
 
-        latency_ms = host_meta.get('latency_ms', 200.0)
+        latency_ms = host_meta.get("latency_ms", 200.0)
         # Latency penalty scales with task priority and is more aggressive for extreme values
         latency_weight = 1.0 + (context.priority / 10.0)  # 1.0 to 2.0
 
@@ -303,7 +306,7 @@ class IntelligentRouter:
         else:
             # Standard penalty for medium latency (200-1000ms)
             latency_penalty = min(latency_ms / 100.0, 10.0) * latency_weight
-        score /= (1 + latency_penalty)
+        score /= 1 + latency_penalty
 
         # Factor 4: Additional load considerations
         # Penalize heavily loaded nodes more for high-priority tasks
@@ -311,11 +314,11 @@ class IntelligentRouter:
             load_penalty = cpu_load * 3.0  # Aggressive penalty
         else:
             load_penalty = cpu_load * 1.5  # Standard penalty
-        score /= (1 + load_penalty)
+        score /= 1 + load_penalty
 
         # Factor 5: Priority alignment
         # Prefer priority 0 hosts for high-priority tasks
-        host_priority = host_meta.get('priority', 999)
+        host_priority = host_meta.get("priority", 999)
         if host_priority == 0 and context.priority >= 7:
             score *= 1.5  # Strong bonus for high-pri tasks on high-pri hosts
         elif host_priority == 0:
@@ -323,20 +326,20 @@ class IntelligentRouter:
 
         # Factor 6: Task-type specialization
         # If host has metadata about preferred task types, use it
-        preferred_tasks = host_meta.get('preferred_task_types', [])
+        preferred_tasks = host_meta.get("preferred_task_types", [])
         if context.task_type in preferred_tasks:
             score *= 1.3
 
         # Factor 6.5: Resource capacity bonus
         # Prefer nodes with more CPU cores (especially for complex tasks)
-        cpu_count = host_meta.get('cpu_count', 1)
+        cpu_count = host_meta.get("cpu_count", 1)
         if cpu_count > 1:
             # Bonus scales with CPU count, capped at 1.5x
             # 4 cores = 1.1x, 8 cores = 1.2x, 16+ cores = 1.4x
             resource_bonus = min(1.0 + (cpu_count / 20.0), 1.5)
             score *= resource_bonus
             # Extra bonus for complex tasks on high-core-count machines
-            if context.complexity == 'complex' and cpu_count >= 8:
+            if context.complexity == "complex" and cpu_count >= 8:
                 score *= 1.2  # 20% extra for complex work on powerful nodes
 
         # Factor 7: Resource headroom for estimated duration
@@ -348,25 +351,22 @@ class IntelligentRouter:
         return score
 
     def _explain_decision(
-        self,
-        selected_host: Dict,
-        context: TaskContext,
-        all_scored: List[Tuple[Dict, float]]
+        self, selected_host: Dict, context: TaskContext, all_scored: List[Tuple[Dict, float]]
     ) -> str:
         """
         Generate human-readable explanation of routing decision.
         """
         reasons = []
 
-        host = selected_host['host']
-        latency = selected_host.get('latency_ms', 0)
-        success_rate = selected_host.get('success_rate', 1.0)
+        host = selected_host["host"]
+        latency = selected_host.get("latency_ms", 0)
+        success_rate = selected_host.get("success_rate", 1.0)
 
         reasons.append(f"Task: {context.task_type} ({context.complexity})")
         reasons.append(f"Host {host}: latency={latency:.1f}ms, success={success_rate:.1%}")
 
         if context.requires_gpu:
-            gpu_mem = selected_host.get('gpu_free_mem', 0)
+            gpu_mem = selected_host.get("gpu_free_mem", 0)
             reasons.append(f"GPU preferred: {gpu_mem}MB available")
 
         if len(all_scored) > 1:
@@ -380,22 +380,20 @@ class IntelligentRouter:
     def _extract_content(self, payload: Dict) -> str:
         """Extract text content from various payload formats."""
         # Chat format
-        if 'messages' in payload:
-            messages = payload['messages']
+        if "messages" in payload:
+            messages = payload["messages"]
             if isinstance(messages, list):
-                return " ".join([
-                    msg.get('content', '')
-                    for msg in messages
-                    if isinstance(msg, dict)
-                ])
+                return " ".join(
+                    [msg.get("content", "") for msg in messages if isinstance(msg, dict)]
+                )
 
         # Embedding format
-        if 'prompt' in payload:
-            return str(payload['prompt'])
+        if "prompt" in payload:
+            return str(payload["prompt"])
 
         # Direct content
-        if 'content' in payload:
-            return str(payload['content'])
+        if "content" in payload:
+            return str(payload["content"])
 
         return ""
 
@@ -408,23 +406,18 @@ class IntelligentRouter:
         """
         # Base durations by task type (ms per token)
         base_rates = {
-            'embedding': 0.5,      # Fast
-            'classification': 1.0,  # Medium
-            'extraction': 1.5,      # Medium-slow
-            'generation': 3.0,      # Slow (autoregressive)
-            'summarization': 2.5,   # Slow
-            'analysis': 2.0,        # Medium-slow
+            "embedding": 0.5,  # Fast
+            "classification": 1.0,  # Medium
+            "extraction": 1.5,  # Medium-slow
+            "generation": 3.0,  # Slow (autoregressive)
+            "summarization": 2.5,  # Slow
+            "analysis": 2.0,  # Medium-slow
         }
 
         rate = base_rates.get(task_type, 2.0)
         return tokens * rate
 
-    def record_performance(
-        self,
-        task_type: str,
-        model: str,
-        actual_duration_ms: float
-    ):
+    def record_performance(self, task_type: str, model: str, actual_duration_ms: float):
         """
         Record actual performance for learning and optimization.
 
@@ -440,8 +433,10 @@ class IntelligentRouter:
         if len(self.performance_history[key]) > 100:
             self.performance_history[key] = self.performance_history[key][-100:]
 
+
 # Global router instance
 _router = IntelligentRouter()
+
 
 def get_router() -> IntelligentRouter:
     """Get the global intelligent router instance."""

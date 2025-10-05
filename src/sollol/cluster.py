@@ -1,12 +1,17 @@
 """
 Cluster initialization for Ray and Dask with host discovery and metrics tracking.
 """
-import ray
+
 import logging
-from .workers import OllamaWorker
+
+import ray
 from dask.distributed import Client, LocalCluster
-from sollol.memory import load_hosts_from_file, init_hosts_meta
+
+from sollol.memory import init_hosts_meta, load_hosts_from_file
 from sollol.metrics import init_host_stats
+
+from .workers import OllamaWorker
+
 
 def start_ray(workers: int = 1, hosts_file: str = "config/hosts.txt"):
     """
@@ -41,6 +46,7 @@ def start_ray(workers: int = 1, hosts_file: str = "config/hosts.txt"):
 
     return actors
 
+
 def start_dask(workers: int = 1, scheduler_address: str = None):
     """
     Initialize Dask distributed cluster.
@@ -55,7 +61,7 @@ def start_dask(workers: int = 1, scheduler_address: str = None):
     try:
         if scheduler_address:
             # Connect to existing Dask scheduler
-            client = Client(scheduler_address, timeout='10s')
+            client = Client(scheduler_address, timeout="10s")
             print(f"✅ Dask connected to scheduler: {scheduler_address}")
             return client
         else:

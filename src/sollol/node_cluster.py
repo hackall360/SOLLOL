@@ -24,13 +24,15 @@ Example:
     # Run inference (automatically handles inter-node communication)
     result = await cluster.generate(prompt="Explain quantum computing")
 """
-import logging
+
 import asyncio
-from typing import List, Dict, Optional, Tuple
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-import requests
+from typing import Dict, List, Optional, Tuple
+
 import httpx
+import requests
 
 from sollol.ollama_node import OllamaNode
 
@@ -40,6 +42,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class LayerPartition:
     """Represents layer assignment for a node in a cluster."""
+
     node_url: str
     start_layer: int
     end_layer: int  # Exclusive
@@ -52,6 +55,7 @@ class LayerPartition:
 @dataclass
 class ModelSpec:
     """Model specifications for partitioning decisions."""
+
     name: str
     total_layers: int
     memory_per_layer_mb: float  # Estimated memory per layer
@@ -69,33 +73,22 @@ MODEL_SPECS = {
         name="llama2:70b",
         total_layers=80,
         memory_per_layer_mb=450,  # ~450MB per layer
-        min_memory_mb=4096  # Base overhead
+        min_memory_mb=4096,  # Base overhead
     ),
     "llama3:70b": ModelSpec(
-        name="llama3:70b",
-        total_layers=80,
-        memory_per_layer_mb=450,
-        min_memory_mb=4096
+        name="llama3:70b", total_layers=80, memory_per_layer_mb=450, min_memory_mb=4096
     ),
     "mixtral:8x7b": ModelSpec(
         name="mixtral:8x7b",
         total_layers=32,
         memory_per_layer_mb=800,  # Larger due to MoE
-        min_memory_mb=6144
+        min_memory_mb=6144,
     ),
     # Small models (no partitioning needed)
     "llama3.2": ModelSpec(
-        name="llama3.2",
-        total_layers=32,
-        memory_per_layer_mb=50,
-        min_memory_mb=1024
+        name="llama3.2", total_layers=32, memory_per_layer_mb=50, min_memory_mb=1024
     ),
-    "phi": ModelSpec(
-        name="phi",
-        total_layers=32,
-        memory_per_layer_mb=40,
-        min_memory_mb=512
-    ),
+    "phi": ModelSpec(name="phi", total_layers=32, memory_per_layer_mb=40, min_memory_mb=512),
 }
 
 
@@ -104,9 +97,7 @@ class LayerPartitioner:
 
     @staticmethod
     def calculate_partitions(
-        model_spec: ModelSpec,
-        nodes: List[OllamaNode],
-        strategy: str = "even"
+        model_spec: ModelSpec, nodes: List[OllamaNode], strategy: str = "even"
     ) -> List[LayerPartition]:
         """
         Calculate layer partitions for nodes.
@@ -126,9 +117,7 @@ class LayerPartitioner:
             raise ValueError("No nodes provided for partitioning")
 
         # Check if cluster has enough total memory
-        total_available_memory = sum(
-            node.capabilities.total_memory_mb for node in nodes
-        )
+        total_available_memory = sum(node.capabilities.total_memory_mb for node in nodes)
 
         if total_available_memory < model_spec.total_memory_mb:
             raise ValueError(
@@ -144,10 +133,7 @@ class LayerPartitioner:
             raise ValueError(f"Unknown partitioning strategy: {strategy}")
 
     @staticmethod
-    def _partition_even(
-        model_spec: ModelSpec,
-        nodes: List[OllamaNode]
-    ) -> List[LayerPartition]:
+    def _partition_even(model_spec: ModelSpec, nodes: List[OllamaNode]) -> List[LayerPartition]:
         """Evenly distribute layers across nodes."""
         n_nodes = len(nodes)
         layers_per_node = model_spec.total_layers // n_nodes
@@ -165,7 +151,7 @@ class LayerPartitioner:
                 node_url=node.url,
                 start_layer=current_layer,
                 end_layer=current_layer + n_layers,
-                layer_count=n_layers
+                layer_count=n_layers,
             )
             partitions.append(partition)
             current_layer += n_layers
@@ -174,8 +160,7 @@ class LayerPartitioner:
 
     @staticmethod
     def _partition_memory_aware(
-        model_spec: ModelSpec,
-        nodes: List[OllamaNode]
+        model_spec: ModelSpec, nodes: List[OllamaNode]
     ) -> List[LayerPartition]:
         """
         Distribute layers proportionally to available memory.
@@ -184,10 +169,7 @@ class LayerPartitioner:
         """
         # Calculate memory proportions
         total_memory = sum(node.capabilities.total_memory_mb for node in nodes)
-        memory_ratios = [
-            node.capabilities.total_memory_mb / total_memory
-            for node in nodes
-        ]
+        memory_ratios = [node.capabilities.total_memory_mb / total_memory for node in nodes]
 
         # Assign layers proportionally
         partitions = []
@@ -204,7 +186,7 @@ class LayerPartitioner:
                 node_url=node.url,
                 start_layer=current_layer,
                 end_layer=current_layer + n_layers,
-                layer_count=n_layers
+                layer_count=n_layers,
             )
             partitions.append(partition)
             current_layer += n_layers
@@ -221,11 +203,7 @@ class NodeCluster:
     """
 
     def __init__(
-        self,
-        name: str,
-        nodes: List[OllamaNode],
-        model: str,
-        partitioning_strategy: str = "even"
+        self, name: str, nodes: List[OllamaNode], model: str, partitioning_strategy: str = "even"
     ):
         """
         Create a node cluster.
@@ -246,18 +224,14 @@ class NodeCluster:
 
         # Calculate partitions
         self.partitions = LayerPartitioner.calculate_partitions(
-            self.model_spec,
-            nodes,
-            strategy=partitioning_strategy
+            self.model_spec, nodes, strategy=partitioning_strategy
         )
 
         # Track cluster health
         self.is_healthy = False
         self.last_health_check = None
 
-        logger.info(
-            f"📦 Created cluster '{name}' with {len(nodes)} nodes for {model}"
-        )
+        logger.info(f"📦 Created cluster '{name}' with {len(nodes)} nodes for {model}")
         for i, partition in enumerate(self.partitions):
             logger.info(
                 f"   Node {i+1}: layers {partition.start_layer}-{partition.end_layer-1} "
@@ -281,12 +255,7 @@ class NodeCluster:
             f"Unknown model '{model}', using default 70B spec. "
             "Consider adding to MODEL_SPECS for better partitioning."
         )
-        return ModelSpec(
-            name=model,
-            total_layers=80,
-            memory_per_layer_mb=400,
-            min_memory_mb=4096
-        )
+        return ModelSpec(name=model, total_layers=80, memory_per_layer_mb=400, min_memory_mb=4096)
 
     async def health_check(self) -> bool:
         """
@@ -301,17 +270,12 @@ class NodeCluster:
         if not all_healthy:
             unhealthy = [n.url for n in self.nodes if not n.is_healthy]
             logger.warning(
-                f"⚠️  Cluster '{self.name}' unhealthy - "
-                f"nodes down: {', '.join(unhealthy)}"
+                f"⚠️  Cluster '{self.name}' unhealthy - " f"nodes down: {', '.join(unhealthy)}"
             )
 
         return all_healthy
 
-    async def generate(
-        self,
-        prompt: str,
-        options: Optional[Dict] = None
-    ) -> Dict:
+    async def generate(self, prompt: str, options: Optional[Dict] = None) -> Dict:
         """
         Run distributed inference across cluster.
 
@@ -351,30 +315,24 @@ class NodeCluster:
                 "start": first_partition.start_layer,
                 "end": first_partition.end_layer,
                 "total_nodes": len(self.nodes),
-                "node_index": 0
-            }
+                "node_index": 0,
+            },
         }
 
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
-                response = await client.post(
-                    f"{first_node.url}/api/generate",
-                    json=payload
-                )
+                response = await client.post(f"{first_node.url}/api/generate", json=payload)
                 response.raise_for_status()
                 result = response.json()
 
                 # Add cluster metadata
-                result['_cluster'] = {
-                    'name': self.name,
-                    'nodes': len(self.nodes),
-                    'partitions': [
-                        {
-                            'node': p.node_url,
-                            'layers': f"{p.start_layer}-{p.end_layer-1}"
-                        }
+                result["_cluster"] = {
+                    "name": self.name,
+                    "nodes": len(self.nodes),
+                    "partitions": [
+                        {"node": p.node_url, "layers": f"{p.start_layer}-{p.end_layer-1}"}
                         for p in self.partitions
-                    ]
+                    ],
                 }
 
                 return result
@@ -390,7 +348,7 @@ class NodeCluster:
         Returns average load across all nodes.
         """
         if not self.nodes:
-            return float('inf')
+            return float("inf")
 
         total_load = sum(node.calculate_load_score() for node in self.nodes)
         return total_load / len(self.nodes)
@@ -438,10 +396,10 @@ def needs_partitioning(model: str) -> bool:
 
 
 __all__ = [
-    'NodeCluster',
-    'LayerPartitioner',
-    'LayerPartition',
-    'ModelSpec',
-    'MODEL_SPECS',
-    'needs_partitioning'
+    "NodeCluster",
+    "LayerPartitioner",
+    "LayerPartition",
+    "ModelSpec",
+    "MODEL_SPECS",
+    "needs_partitioning",
 ]

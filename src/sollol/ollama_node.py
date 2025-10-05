@@ -1,9 +1,10 @@
-import requests
-import time
 import logging
-from typing import Dict, Optional
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Dict, Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class NodeCapabilities:
     """Hardware capabilities of an Ollama node."""
+
     has_gpu: bool = False
     gpu_count: int = 0
     gpu_memory_mb: int = 0
@@ -22,6 +24,7 @@ class NodeCapabilities:
 @dataclass
 class NodeMetrics:
     """Performance metrics for an Ollama node."""
+
     total_requests: int = 0
     failed_requests: int = 0
     avg_response_time: float = 0.0
@@ -59,7 +62,7 @@ class OllamaNode:
             name: Optional friendly name
             priority: Priority level (higher = preferred)
         """
-        self.url = url.rstrip('/')
+        self.url = url.rstrip("/")
         self.name = name or url
         self.priority = priority
         self.capabilities = NodeCapabilities()
@@ -85,7 +88,7 @@ class OllamaNode:
 
                 # Update capabilities
                 data = response.json()
-                self.capabilities.models_loaded = [m['name'] for m in data.get('models', [])]
+                self.capabilities.models_loaded = [m["name"] for m in data.get("models", [])]
 
                 return True
             else:
@@ -110,14 +113,14 @@ class OllamaNode:
             response = requests.post(
                 f"{self.url}/api/show",
                 json={"name": "llama3.2"},  # Try a common model
-                timeout=timeout
+                timeout=timeout,
             )
 
             if response.status_code == 200:
                 data = response.json()
                 # Infer GPU from model details (this is heuristic)
-                model_params = data.get('parameters', '')
-                if 'gpu' in model_params.lower() or 'cuda' in model_params.lower():
+                model_params = data.get("parameters", "")
+                if "gpu" in model_params.lower() or "cuda" in model_params.lower():
                     self.capabilities.has_gpu = True
 
             # For now, set defaults (could be extended with system APIs)
@@ -130,8 +133,14 @@ class OllamaNode:
             logger.debug(f"Capability probe failed for {self.name}: {e}")
             return False
 
-    def generate(self, model: str, prompt: str, system_prompt: Optional[str] = None,
-                 format_json: bool = False, timeout: float = 30.0) -> Dict:
+    def generate(
+        self,
+        model: str,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        format_json: bool = False,
+        timeout: float = 30.0,
+    ) -> Dict:
         """
         Generate a response from this node.
 
@@ -140,11 +149,7 @@ class OllamaNode:
         """
         start = time.time()
 
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False
-        }
+        payload = {"model": model, "prompt": prompt, "stream": False}
 
         if system_prompt:
             payload["system"] = system_prompt
@@ -157,9 +162,7 @@ class OllamaNode:
             connect_timeout = timeout / 2.0
             read_timeout = timeout / 2.0
             response = requests.post(
-                f"{self.url}/api/generate",
-                json=payload,
-                timeout=(connect_timeout, read_timeout)
+                f"{self.url}/api/generate", json=payload, timeout=(connect_timeout, read_timeout)
             )
             response.raise_for_status()
             elapsed = time.time() - start
@@ -174,7 +177,7 @@ class OllamaNode:
                 "response": result.get("response", ""),
                 "node": self.name,
                 "elapsed": elapsed,
-                "success": True
+                "success": True,
             }
 
         except requests.exceptions.Timeout as e:
@@ -187,7 +190,7 @@ class OllamaNode:
                 "node": self.name,
                 "elapsed": elapsed,
                 "success": False,
-                "error": f"Timeout after {elapsed:.2f}s: {str(e)}"
+                "error": f"Timeout after {elapsed:.2f}s: {str(e)}",
             }
         except requests.exceptions.ConnectionError as e:
             elapsed = time.time() - start
@@ -199,7 +202,7 @@ class OllamaNode:
                 "node": self.name,
                 "elapsed": elapsed,
                 "success": False,
-                "error": f"Connection error after {elapsed:.2f}s: {str(e)}"
+                "error": f"Connection error after {elapsed:.2f}s: {str(e)}",
             }
         except requests.exceptions.HTTPError as e:
             elapsed = time.time() - start
@@ -211,7 +214,7 @@ class OllamaNode:
                 "node": self.name,
                 "elapsed": elapsed,
                 "success": False,
-                "error": f"HTTP error: {str(e)}"
+                "error": f"HTTP error: {str(e)}",
             }
         except Exception as e:
             elapsed = time.time() - start
@@ -223,7 +226,7 @@ class OllamaNode:
                 "node": self.name,
                 "elapsed": elapsed,
                 "success": False,
-                "error": str(e)
+                "error": str(e),
             }
 
     def _update_avg_response_time(self, elapsed: float):
@@ -233,7 +236,9 @@ class OllamaNode:
         if len(self._last_request_times) > 100:
             self._last_request_times.pop(0)
 
-        self.metrics.avg_response_time = sum(self._last_request_times) / len(self._last_request_times)
+        self.metrics.avg_response_time = sum(self._last_request_times) / len(
+            self._last_request_times
+        )
 
     def calculate_load_score(self) -> float:
         """

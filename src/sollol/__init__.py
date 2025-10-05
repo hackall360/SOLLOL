@@ -35,24 +35,25 @@ Example:
     ```
 """
 
-# Core load balancing
-from sollol.pool import OllamaPool
 from sollol.client import SOLLOLClient
-
-# Distributed inference
-from sollol.hybrid_router import HybridRouter
-from sollol.llama_cpp_rpc import LlamaCppRPCClient, LlamaCppDistributedCluster
-from sollol.llama_cpp_coordinator import LlamaCppCoordinator
+from sollol.config import SOLLOLConfig
 
 # Discovery
 from sollol.discovery import discover_ollama_nodes
+
+# Distributed inference
+from sollol.hybrid_router import HybridRouter
+from sollol.llama_cpp_coordinator import LlamaCppCoordinator
+from sollol.llama_cpp_rpc import LlamaCppDistributedCluster, LlamaCppRPCClient
+
+# Core load balancing
+from sollol.pool import OllamaPool
+from sollol.rpc_auto_setup import RPCAutoSetup, auto_setup_rpc_backends
 from sollol.rpc_discovery import auto_discover_rpc_backends, check_rpc_server
-from sollol.rpc_auto_setup import auto_setup_rpc_backends, RPCAutoSetup
 from sollol.rpc_registry import RPCBackendRegistry
 
 # Legacy support
 from sollol.sollol import SOLLOL
-from sollol.config import SOLLOLConfig
 
 __version__ = "0.3.5"
 __all__ = [

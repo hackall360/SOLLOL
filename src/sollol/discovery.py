@@ -7,16 +7,18 @@ Tries multiple strategies in order:
 3. Network scan (parallel, ~500ms)
 """
 
-import socket
-import os
 import logging
-from typing import List, Dict, Optional
+import os
+import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-def discover_ollama_nodes(timeout: float = 0.5, exclude_localhost: bool = False) -> List[Dict[str, str]]:
+def discover_ollama_nodes(
+    timeout: float = 0.5, exclude_localhost: bool = False
+) -> List[Dict[str, str]]:
     """
     Discover Ollama nodes using multiple strategies.
     Returns in under 1 second.
@@ -51,13 +53,13 @@ def discover_ollama_nodes(timeout: float = 0.5, exclude_localhost: bool = False)
 
 def _from_environment(timeout: float, exclude_localhost: bool = False) -> List[Dict[str, str]]:
     """Check OLLAMA_HOST environment variable."""
-    host = os.getenv('OLLAMA_HOST', '').strip()
+    host = os.getenv("OLLAMA_HOST", "").strip()
     if host:
         parsed = _parse_host(host)
         # Skip if localhost and excluded
-        if exclude_localhost and parsed['host'] in ('localhost', '127.0.0.1'):
+        if exclude_localhost and parsed["host"] in ("localhost", "127.0.0.1"):
             return []
-        if _is_ollama_running(parsed['host'], int(parsed['port']), timeout):
+        if _is_ollama_running(parsed["host"], int(parsed["port"]), timeout):
             return [parsed]
     return []
 
@@ -95,7 +97,7 @@ def _from_network_scan(timeout: float, exclude_localhost: bool = False) -> List[
     def check_host(ip: str) -> Optional[Dict[str, str]]:
         """Check if Ollama is running on this IP."""
         # Skip localhost IPs if excluded
-        if exclude_localhost and ip in ('127.0.0.1', f"{subnet}.1"):
+        if exclude_localhost and ip in ("127.0.0.1", f"{subnet}.1"):
             return None
         if _is_port_open(ip, 11434, timeout / 254):
             if _is_ollama_running(ip, 11434, timeout):
@@ -143,11 +145,9 @@ def _is_port_open(host: str, port: int, timeout: float) -> bool:
 def _is_ollama_running(host: str, port: int, timeout: float) -> bool:
     """Verify Ollama API is actually running."""
     import requests
+
     try:
-        resp = requests.get(
-            f"http://{host}:{port}/api/tags",
-            timeout=timeout
-        )
+        resp = requests.get(f"http://{host}:{port}/api/tags", timeout=timeout)
         return resp.status_code == 200
     except:
         return False
@@ -162,9 +162,9 @@ def _get_local_subnet() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         # Doesn't actually connect, just determines route
-        s.connect(('10.255.255.255', 1))
+        s.connect(("10.255.255.255", 1))
         local_ip = s.getsockname()[0]
-        return '.'.join(local_ip.split('.')[:-1])
+        return ".".join(local_ip.split(".")[:-1])
     finally:
         s.close()
 
@@ -179,11 +179,11 @@ def _parse_host(host_string: str) -> Dict[str, str]:
         "http://example.com:11434" -> {"host": "example.com", "port": "11434"}
     """
     # Remove http:// or https://
-    host_string = host_string.replace('http://', '').replace('https://', '')
+    host_string = host_string.replace("http://", "").replace("https://", "")
 
     # Split host:port
-    if ':' in host_string:
-        host, port = host_string.rsplit(':', 1)
+    if ":" in host_string:
+        host, port = host_string.rsplit(":", 1)
         return {"host": host, "port": port}
     else:
         return {"host": host_string, "port": "11434"}

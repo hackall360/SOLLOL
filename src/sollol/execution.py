@@ -5,15 +5,16 @@ Provides parallel and asynchronous execution capabilities with intelligent
 SOLLOL routing. Automatically distributes tasks across available nodes for
 optimal performance.
 """
+
 import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Callable, Optional, Any
 from datetime import datetime
+from typing import Any, Callable, List, Optional
 
-from .tasks import DistributedTask, TaskResult, ExecutionResult
 from .integration import SOLLOLLoadBalancer
+from .tasks import DistributedTask, ExecutionResult, TaskResult
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class DistributedExecutor:
         self,
         tasks: List[DistributedTask],
         executor_fn: Callable[[DistributedTask, str], Any],
-        merge_strategy: str = "collect"
+        merge_strategy: str = "collect",
     ) -> ExecutionResult:
         """
         Execute multiple tasks in parallel with SOLLOL routing.
@@ -89,19 +90,22 @@ class DistributedExecutor:
                 )
             except Exception as e:
                 logger.error(f"❌ Task {task.task_id} failed: {e}")
-                results.append(TaskResult(
-                    task_id=task.task_id,
-                    node_url="unknown",
-                    result=None,
-                    duration_ms=0,
-                    success=False,
-                    error=str(e)
-                ))
+                results.append(
+                    TaskResult(
+                        task_id=task.task_id,
+                        node_url="unknown",
+                        result=None,
+                        duration_ms=0,
+                        success=False,
+                        error=str(e),
+                    )
+                )
 
         total_time = (time.time() - start_time) * 1000
 
         # Merge results based on strategy
         from .aggregation import ResultAggregator
+
         aggregator = ResultAggregator()
         merged_result = aggregator.merge(results, merge_strategy)
 
@@ -120,22 +124,20 @@ class DistributedExecutor:
             merged_result=merged_result,
             individual_results=results,
             statistics={
-                'total_tasks': len(tasks),
-                'successful': len(successful),
-                'failed': len(results) - len(successful),
-                'total_duration_ms': total_time,
-                'avg_task_duration_ms': avg_duration,
-                'sequential_duration_ms': sequential_time,
-                'speedup_factor': speedup,
-                'parallel_efficiency': speedup / self.max_workers if self.max_workers > 0 else 0
+                "total_tasks": len(tasks),
+                "successful": len(successful),
+                "failed": len(results) - len(successful),
+                "total_duration_ms": total_time,
+                "avg_task_duration_ms": avg_duration,
+                "sequential_duration_ms": sequential_time,
+                "speedup_factor": speedup,
+                "parallel_efficiency": speedup / self.max_workers if self.max_workers > 0 else 0,
             },
-            execution_mode='parallel'
+            execution_mode="parallel",
         )
 
     def _execute_task(
-        self,
-        task: DistributedTask,
-        executor_fn: Callable[[DistributedTask, str], Any]
+        self, task: DistributedTask, executor_fn: Callable[[DistributedTask, str], Any]
     ) -> TaskResult:
         """Execute a single task with SOLLOL routing."""
         start_time = time.time()
@@ -143,9 +145,7 @@ class DistributedExecutor:
         try:
             # Get routing decision from SOLLOL
             decision = self.load_balancer.route_request(
-                payload=task.payload,
-                agent_name=task.task_id,
-                priority=task.priority
+                payload=task.payload, agent_name=task.task_id, priority=task.priority
             )
 
             # Execute on selected node
@@ -154,9 +154,7 @@ class DistributedExecutor:
 
             # Record performance for adaptive learning
             self.load_balancer.record_performance(
-                decision=decision,
-                actual_duration_ms=duration_ms,
-                success=True
+                decision=decision, actual_duration_ms=duration_ms, success=True
             )
 
             return TaskResult(
@@ -165,7 +163,7 @@ class DistributedExecutor:
                 result=result,
                 duration_ms=duration_ms,
                 success=True,
-                routing_metadata=self.load_balancer.get_routing_metadata(decision)
+                routing_metadata=self.load_balancer.get_routing_metadata(decision),
             )
 
         except Exception as e:
@@ -178,7 +176,7 @@ class DistributedExecutor:
                 result=None,
                 duration_ms=duration_ms,
                 success=False,
-                error=str(e)
+                error=str(e),
             )
 
     def shutdown(self):
@@ -212,7 +210,7 @@ class AsyncDistributedExecutor:
         self,
         tasks: List[DistributedTask],
         executor_fn: Callable[[DistributedTask, str], Any],
-        merge_strategy: str = "collect"
+        merge_strategy: str = "collect",
     ) -> ExecutionResult:
         """
         Execute tasks in parallel using asyncio.
@@ -239,14 +237,16 @@ class AsyncDistributedExecutor:
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 logger.error(f"Task {tasks[i].task_id} failed: {result}")
-                task_results.append(TaskResult(
-                    task_id=tasks[i].task_id,
-                    node_url="unknown",
-                    result=None,
-                    duration_ms=0,
-                    success=False,
-                    error=str(result)
-                ))
+                task_results.append(
+                    TaskResult(
+                        task_id=tasks[i].task_id,
+                        node_url="unknown",
+                        result=None,
+                        duration_ms=0,
+                        success=False,
+                        error=str(result),
+                    )
+                )
             else:
                 task_results.append(result)
 
@@ -254,6 +254,7 @@ class AsyncDistributedExecutor:
 
         # Merge and return results
         from .aggregation import ResultAggregator
+
         aggregator = ResultAggregator()
         merged_result = aggregator.merge(task_results, merge_strategy)
 
@@ -271,21 +272,19 @@ class AsyncDistributedExecutor:
             merged_result=merged_result,
             individual_results=task_results,
             statistics={
-                'total_tasks': len(tasks),
-                'successful': len(successful),
-                'failed': len(task_results) - len(successful),
-                'total_duration_ms': total_time,
-                'avg_task_duration_ms': avg_duration,
-                'sequential_duration_ms': sequential_time,
-                'speedup_factor': speedup
+                "total_tasks": len(tasks),
+                "successful": len(successful),
+                "failed": len(task_results) - len(successful),
+                "total_duration_ms": total_time,
+                "avg_task_duration_ms": avg_duration,
+                "sequential_duration_ms": sequential_time,
+                "speedup_factor": speedup,
             },
-            execution_mode='async_parallel'
+            execution_mode="async_parallel",
         )
 
     async def _execute_task_async(
-        self,
-        task: DistributedTask,
-        executor_fn: Callable[[DistributedTask, str], Any]
+        self, task: DistributedTask, executor_fn: Callable[[DistributedTask, str], Any]
     ) -> TaskResult:
         """Execute a task asynchronously."""
         loop = asyncio.get_event_loop()
@@ -296,9 +295,7 @@ class AsyncDistributedExecutor:
 
             # Get routing decision
             decision = self.load_balancer.route_request(
-                payload=task.payload,
-                agent_name=task.task_id,
-                priority=task.priority
+                payload=task.payload, agent_name=task.task_id, priority=task.priority
             )
 
             # Execute task
@@ -307,9 +304,7 @@ class AsyncDistributedExecutor:
 
             # Record performance
             self.load_balancer.record_performance(
-                decision=decision,
-                actual_duration_ms=duration_ms,
-                success=True
+                decision=decision, actual_duration_ms=duration_ms, success=True
             )
 
             return TaskResult(
@@ -318,7 +313,7 @@ class AsyncDistributedExecutor:
                 result=result,
                 duration_ms=duration_ms,
                 success=True,
-                routing_metadata=self.load_balancer.get_routing_metadata(decision)
+                routing_metadata=self.load_balancer.get_routing_metadata(decision),
             )
 
         return await loop.run_in_executor(None, blocking_call)

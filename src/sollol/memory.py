@@ -1,17 +1,20 @@
 """
 Memory layer for SOLLOL - host management and performance-aware routing.
 """
-import os
+
 import asyncio
-import httpx
-from typing import List, Dict, Optional
+import os
 from datetime import datetime
+from typing import Dict, List, Optional
+
+import httpx
 
 HOSTS_FILE = "config/hosts.txt"
 
 # Host metadata with performance metrics
 # Will be dynamically updated by metrics feedback loop
 HOSTS_META = []
+
 
 def load_hosts_from_file(hosts_file: str = HOSTS_FILE) -> List[str]:
     """Load OLLOL hosts from configuration file."""
@@ -23,6 +26,7 @@ def load_hosts_from_file(hosts_file: str = HOSTS_FILE) -> List[str]:
         hosts = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
     return hosts
+
 
 def init_hosts_meta(hosts: List[str]) -> None:
     """Initialize HOSTS_META with default values for each host."""
@@ -42,13 +46,16 @@ def init_hosts_meta(hosts: List[str]) -> None:
     ]
     print(f"✅ Initialized metadata for {len(HOSTS_META)} hosts")
 
+
 def get_hosts() -> List[str]:
     """Return list of all configured hosts."""
     return [meta["host"] for meta in HOSTS_META if meta["available"]]
 
+
 def get_all_hosts_meta() -> List[Dict]:
     """Return full metadata for all hosts."""
     return HOSTS_META
+
 
 def get_best_host(task_type: str = "default") -> Optional[str]:
     """
@@ -77,6 +84,7 @@ def get_best_host(task_type: str = "default") -> Optional[str]:
     best_host = min(available_hosts, key=score)
     return best_host["host"]
 
+
 def update_host_metrics(host: str, metrics: Dict) -> None:
     """
     Update performance metrics for a specific host.
@@ -91,6 +99,7 @@ def update_host_metrics(host: str, metrics: Dict) -> None:
             host_meta["last_updated"] = datetime.now()
             break
 
+
 def mark_host_unavailable(host: str) -> None:
     """Mark a host as unavailable after failures."""
     for host_meta in HOSTS_META:
@@ -100,6 +109,7 @@ def mark_host_unavailable(host: str) -> None:
             print(f"❌ Marked {host} as unavailable")
             break
 
+
 def mark_host_available(host: str) -> None:
     """Mark a host as available."""
     for host_meta in HOSTS_META:
@@ -108,6 +118,7 @@ def mark_host_available(host: str) -> None:
             host_meta["last_updated"] = datetime.now()
             print(f"✅ Marked {host} as available")
             break
+
 
 async def health_check_host(host: str) -> bool:
     """
@@ -123,6 +134,7 @@ async def health_check_host(host: str) -> bool:
     except Exception as e:
         print(f"⚠️  Health check failed for {host}: {e}")
         return False
+
 
 async def health_check_all_hosts() -> Dict[str, bool]:
     """
@@ -151,9 +163,11 @@ async def health_check_all_hosts() -> Dict[str, bool]:
 
     return health_status
 
+
 # Placeholder for document queue (for autobatch)
 _document_queue = []
 _last_doc_id = 0
+
 
 def fetch_new_docs() -> List[str]:
     """
@@ -173,6 +187,7 @@ def fetch_new_docs() -> List[str]:
     # Generate sample docs (for testing)
     # In production, replace with actual data source
     return []
+
 
 def queue_document(doc: str) -> None:
     """Add a document to the embedding queue."""

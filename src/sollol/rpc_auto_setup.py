@@ -7,14 +7,15 @@ This module automatically:
 3. If not built, automatically builds it
 4. Starts RPC servers automatically
 """
-import os
+
 import logging
+import multiprocessing
+import os
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-import multiprocessing
+from typing import Any, Dict, List, Optional
 
-from sollol.rpc_discovery import discover_rpc_backends, check_rpc_server
+from sollol.rpc_discovery import check_rpc_server, discover_rpc_backends
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class RPCAutoSetup:
         auto_build: bool = True,
         auto_start: bool = True,
         default_port: int = 50052,
-        default_host: str = "127.0.0.1"
+        default_host: str = "127.0.0.1",
     ):
         """
         Initialize RPC auto-setup.
@@ -48,9 +49,7 @@ class RPCAutoSetup:
         self.rpc_processes = []
 
     def get_or_create_backends(
-        self,
-        num_backends: int = 1,
-        discover_network: bool = True
+        self, num_backends: int = 1, discover_network: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Get RPC backends, automatically setting them up if needed.
@@ -68,7 +67,7 @@ class RPCAutoSetup:
 
         # Check localhost specifically
         if check_rpc_server(self.default_host, self.default_port):
-            if not any(b['host'] == self.default_host for b in backends):
+            if not any(b["host"] == self.default_host for b in backends):
                 backends.append({"host": self.default_host, "port": self.default_port})
 
         if backends:
@@ -119,9 +118,9 @@ class RPCAutoSetup:
             if not self.llama_dir.exists():
                 logger.info(f"📥 Cloning llama.cpp to {self.llama_dir}...")
                 result = subprocess.run(
-                    ['git', 'clone', 'https://github.com/ggerganov/llama.cpp', str(self.llama_dir)],
+                    ["git", "clone", "https://github.com/ggerganov/llama.cpp", str(self.llama_dir)],
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
                 if result.returncode != 0:
                     logger.error(f"Failed to clone: {result.stderr}")
@@ -133,10 +132,10 @@ class RPCAutoSetup:
 
             # Configure
             result = subprocess.run(
-                ['cmake', '-B', 'build', '-DGGML_RPC=ON', '-DLLAMA_CURL=OFF'],
+                ["cmake", "-B", "build", "-DGGML_RPC=ON", "-DLLAMA_CURL=OFF"],
                 cwd=str(self.llama_dir),
                 capture_output=True,
-                text=True
+                text=True,
             )
             if result.returncode != 0:
                 logger.error(f"CMake configuration failed: {result.stderr}")
@@ -145,10 +144,19 @@ class RPCAutoSetup:
             # Build
             nproc = multiprocessing.cpu_count()
             result = subprocess.run(
-                ['cmake', '--build', 'build', '--config', 'Release', '--target', 'rpc-server', f'-j{nproc}'],
+                [
+                    "cmake",
+                    "--build",
+                    "build",
+                    "--config",
+                    "Release",
+                    "--target",
+                    "rpc-server",
+                    f"-j{nproc}",
+                ],
                 cwd=str(self.llama_dir),
                 capture_output=True,
-                text=True
+                text=True,
             )
             if result.returncode != 0:
                 logger.error(f"Build failed: {result.stderr}")
@@ -166,7 +174,7 @@ class RPCAutoSetup:
         host: Optional[str] = None,
         port: Optional[int] = None,
         mem_gb: Optional[int] = None,
-        background: bool = True
+        background: bool = True,
     ) -> bool:
         """
         Start an RPC server.
@@ -194,9 +202,9 @@ class RPCAutoSetup:
             logger.info(f"RPC server already running on {host}:{port}")
             return True
 
-        cmd = [str(rpc_server), '--host', host, '--port', str(port)]
+        cmd = [str(rpc_server), "--host", host, "--port", str(port)]
         if mem_gb:
-            cmd.extend(['--mem', str(mem_gb * 1024)])
+            cmd.extend(["--mem", str(mem_gb * 1024)])
 
         try:
             if background:
@@ -205,12 +213,13 @@ class RPCAutoSetup:
                     cmd,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    cwd=str(self.llama_dir)
+                    cwd=str(self.llama_dir),
                 )
                 self.rpc_processes.append(process)
 
                 # Give it a moment to start
                 import time
+
                 time.sleep(1)
 
                 # Verify it's running
@@ -245,7 +254,7 @@ def auto_setup_rpc_backends(
     num_backends: int = 1,
     llama_dir: Optional[str] = None,
     auto_build: bool = True,
-    discover_network: bool = True
+    discover_network: bool = True,
 ) -> List[Dict[str, Any]]:
     """
     Convenience function to auto-setup RPC backends.
@@ -265,23 +274,15 @@ def auto_setup_rpc_backends(
         >>> print(backends)
         [{'host': '127.0.0.1', 'port': 50052}, {'host': '127.0.0.1', 'port': 50053}]
     """
-    setup = RPCAutoSetup(
-        llama_dir=llama_dir,
-        auto_build=auto_build,
-        auto_start=True
-    )
+    setup = RPCAutoSetup(llama_dir=llama_dir, auto_build=auto_build, auto_start=True)
     return setup.get_or_create_backends(
-        num_backends=num_backends,
-        discover_network=discover_network
+        num_backends=num_backends, discover_network=discover_network
     )
 
 
 if __name__ == "__main__":
     # Test auto-setup
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
     print("Testing RPC auto-setup...")
     backends = auto_setup_rpc_backends(num_backends=2)

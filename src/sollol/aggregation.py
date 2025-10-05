@@ -4,9 +4,11 @@ Result Aggregation for Distributed Execution
 Provides strategies for merging results from parallel task execution.
 Supports common patterns like collection, voting, consensus, and best-result selection.
 """
+
 import logging
 from collections import Counter
-from typing import List, Any, Optional
+from typing import Any, List, Optional
+
 from .tasks import TaskResult
 
 logger = logging.getLogger(__name__)
@@ -43,7 +45,7 @@ class ResultAggregator:
             "vote": self._vote,
             "merge": self._merge,
             "best": self._best,
-            "consensus": self._consensus
+            "consensus": self._consensus,
         }
 
         if strategy not in strategies:
@@ -91,7 +93,9 @@ class ResultAggregator:
         # Find the actual result object that matches
         for r in successful:
             if str(r.result) == most_common_str:
-                logger.info(f"📊 Vote result: {most_common_str[:50]}... (from {len(successful)} results)")
+                logger.info(
+                    f"📊 Vote result: {most_common_str[:50]}... (from {len(successful)} results)"
+                )
                 return r.result
 
         return successful[0].result
@@ -142,11 +146,7 @@ class ResultAggregator:
         )
         return best.result
 
-    def _consensus(
-        self,
-        results: List[TaskResult],
-        threshold: float = 0.6
-    ) -> Optional[Any]:
+    def _consensus(self, results: List[TaskResult], threshold: float = 0.6) -> Optional[Any]:
         """
         Return result only if consensus threshold is met.
 
@@ -183,16 +183,11 @@ class ResultAggregator:
                     return r.result
 
         logger.warning(
-            f"❌ Consensus failed: {agreement_rate:.1%} < {threshold:.1%} "
-            f"(threshold not met)"
+            f"❌ Consensus failed: {agreement_rate:.1%} < {threshold:.1%} " f"(threshold not met)"
         )
         return None
 
-    def quality_weighted_merge(
-        self,
-        results: List[TaskResult],
-        quality_scores: List[float]
-    ) -> Any:
+    def quality_weighted_merge(self, results: List[TaskResult], quality_scores: List[float]) -> Any:
         """
         Merge results weighted by quality scores.
 
@@ -209,10 +204,7 @@ class ResultAggregator:
         if len(results) != len(quality_scores):
             raise ValueError("Number of results must match number of quality scores")
 
-        successful = [
-            (r, q) for r, q in zip(results, quality_scores)
-            if r.success and q > 0
-        ]
+        successful = [(r, q) for r, q in zip(results, quality_scores) if r.success and q > 0]
 
         if not successful:
             return None
@@ -221,8 +213,7 @@ class ResultAggregator:
         best_result, best_quality = max(successful, key=lambda x: x[1])
 
         logger.info(
-            f"🌟 Quality-weighted result: score={best_quality:.2f} "
-            f"from {best_result.node_url}"
+            f"🌟 Quality-weighted result: score={best_quality:.2f} " f"from {best_result.node_url}"
         )
 
         return best_result.result

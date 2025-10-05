@@ -18,12 +18,12 @@ Example:
     # Returns: /home/user/.ollama/models/blobs/sha256-abc123...
 """
 
-import os
 import json
 import logging
+import os
 import subprocess
-from typing import Optional, Dict, Any
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ class OllamaGGUFResolver:
                 ["ollama", "show", model_name, "--modelfile"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
 
             if result.returncode != 0:
@@ -108,13 +108,13 @@ class OllamaGGUFResolver:
 
             # Parse output to find FROM line with blob reference
             # Format: FROM /path/to/blob OR FROM @sha256:<hash>
-            for line in result.stdout.split('\n'):
+            for line in result.stdout.split("\n"):
                 line = line.strip()
-                if line.startswith('FROM '):
+                if line.startswith("FROM "):
                     from_path = line[5:].strip()
 
                     # Check if it's a blob reference
-                    if from_path.startswith('@sha256:'):
+                    if from_path.startswith("@sha256:"):
                         # Extract hash and build blob path
                         blob_hash = from_path[1:]  # Remove @
                         blob_path = self.blobs_dir / f"sha256-{blob_hash.split(':')[1]}"
@@ -123,7 +123,7 @@ class OllamaGGUFResolver:
                             logger.info(f"✅ Resolved {model_name} → {blob_path}")
                             return str(blob_path)
 
-                    elif from_path.startswith('/') and 'blobs' in from_path:
+                    elif from_path.startswith("/") and "blobs" in from_path:
                         # Direct path reference
                         if Path(from_path).exists():
                             logger.info(f"✅ Resolved {model_name} → {from_path}")
@@ -153,42 +153,36 @@ class OllamaGGUFResolver:
         """
         try:
             # Parse model name into parts
-            if ':' in model_name:
-                model, tag = model_name.split(':', 1)
+            if ":" in model_name:
+                model, tag = model_name.split(":", 1)
             else:
                 model = model_name
-                tag = 'latest'
+                tag = "latest"
 
             # Build manifest path
             # Format: manifests/registry.ollama.ai/library/<model>/<tag>
-            manifest_path = (
-                self.manifests_dir /
-                "registry.ollama.ai" /
-                "library" /
-                model /
-                tag
-            )
+            manifest_path = self.manifests_dir / "registry.ollama.ai" / "library" / model / tag
 
             if not manifest_path.exists():
                 logger.debug(f"Manifest not found: {manifest_path}")
                 return None
 
             # Parse manifest JSON
-            with open(manifest_path, 'r') as f:
+            with open(manifest_path, "r") as f:
                 manifest = json.load(f)
 
             # Find GGUF layer in manifest
             # The GGUF blob is typically in the layers array
-            layers = manifest.get('layers', [])
+            layers = manifest.get("layers", [])
 
             for layer in layers:
-                media_type = layer.get('mediaType', '')
-                digest = layer.get('digest', '')
+                media_type = layer.get("mediaType", "")
+                digest = layer.get("digest", "")
 
                 # GGUF layers have mediaType: application/vnd.ollama.image.model
-                if 'model' in media_type.lower() and digest.startswith('sha256:'):
+                if "model" in media_type.lower() and digest.startswith("sha256:"):
                     # Build blob path from digest
-                    blob_hash = digest.replace(':', '-')
+                    blob_hash = digest.replace(":", "-")
                     blob_path = self.blobs_dir / blob_hash
 
                     if blob_path.exists():
@@ -201,11 +195,7 @@ class OllamaGGUFResolver:
             logger.debug(f"Error in _resolve_via_manifest: {e}")
             return None
 
-    def resolve_or_fallback(
-        self,
-        model_name: str,
-        fallback_path: Optional[str] = None
-    ) -> str:
+    def resolve_or_fallback(self, model_name: str, fallback_path: Optional[str] = None) -> str:
         """
         Resolve GGUF path with fallback to explicit path.
 
@@ -250,16 +240,11 @@ class OllamaGGUFResolver:
 
         try:
             # Use `ollama list` to get all models
-            result = subprocess.run(
-                ["ollama", "list"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            result = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
 
             if result.returncode == 0:
                 # Parse output (skip header)
-                lines = result.stdout.strip().split('\n')[1:]
+                lines = result.stdout.strip().split("\n")[1:]
 
                 for line in lines:
                     # Extract model name (first column)

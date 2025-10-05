@@ -11,11 +11,13 @@ Integration with SOLLOL:
 - Pre-warms critical models on GPU nodes
 - Validates models are actually on GPU after routing
 """
-import requests
-import time
+
 import logging
-from typing import Dict, List, Optional, Tuple
+import time
 from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ModelPlacement:
     """Information about where a model is actually loaded."""
+
     node_url: str
     model_name: str
     location: str  # 'GPU (VRAM)' or 'CPU (RAM)'
@@ -78,11 +81,11 @@ class SOLLOLGPUController:
             models = ps_data.get("models", [])
 
             status = {
-                'node_url': node_url,
-                'models': [],
-                'gpu_count': 0,
-                'cpu_count': 0,
-                'timestamp': time.time()
+                "node_url": node_url,
+                "models": [],
+                "gpu_count": 0,
+                "cpu_count": 0,
+                "timestamp": time.time(),
             }
 
             for model_info in models:
@@ -90,28 +93,28 @@ class SOLLOLGPUController:
                 size_vram = model_info.get("size_vram", 0)
                 size_total = model_info.get("size", 0)
 
-                location = 'GPU (VRAM)' if size_vram > 0 else 'CPU (RAM)'
+                location = "GPU (VRAM)" if size_vram > 0 else "CPU (RAM)"
                 if size_vram > 0:
-                    status['gpu_count'] += 1
+                    status["gpu_count"] += 1
                 else:
-                    status['cpu_count'] += 1
+                    status["cpu_count"] += 1
 
                 model_data = {
-                    'name': model_name,
-                    'location': location,
-                    'size_mb': size_total / (1024**2),
-                    'vram_mb': size_vram / (1024**2)
+                    "name": model_name,
+                    "location": location,
+                    "size_mb": size_total / (1024**2),
+                    "vram_mb": size_vram / (1024**2),
                 }
-                status['models'].append(model_data)
+                status["models"].append(model_data)
 
                 # Update placement history
                 placement = ModelPlacement(
                     node_url=node_url,
                     model_name=model_name,
                     location=location,
-                    size_mb=model_data['size_mb'],
-                    vram_mb=model_data['vram_mb'],
-                    timestamp=time.time()
+                    size_mb=model_data["size_mb"],
+                    vram_mb=model_data["vram_mb"],
+                    timestamp=time.time(),
                 )
                 self.placement_history[f"{node_url}:{model_name}"] = placement
 
@@ -121,12 +124,7 @@ class SOLLOLGPUController:
             logger.error(f"Error getting model status from {node_url}: {e}")
             return {"error": str(e)}
 
-    def force_gpu_load(
-        self,
-        node_url: str,
-        model_name: str,
-        num_gpu_layers: int = -1
-    ) -> Dict:
+    def force_gpu_load(self, node_url: str, model_name: str, num_gpu_layers: int = -1) -> Dict:
         """
         Force a model to load on GPU.
 
@@ -146,29 +144,22 @@ class SOLLOLGPUController:
 
             # Step 1: Unload the model
             requests.post(
-                f"{node_url}/api/generate",
-                json={
-                    "model": model_name,
-                    "keep_alive": 0
-                },
-                timeout=10
+                f"{node_url}/api/generate", json={"model": model_name, "keep_alive": 0}, timeout=10
             )
             time.sleep(2)
 
             # Step 2: Reload with GPU configuration
-            if 'embed' in model_name.lower():
+            if "embed" in model_name.lower():
                 # Embedding model
                 load_response = requests.post(
                     f"{node_url}/api/embed",
                     json={
                         "model": model_name,
                         "input": "warmup",
-                        "options": {
-                            "num_gpu": num_gpu_layers
-                        },
-                        "keep_alive": "1h"
+                        "options": {"num_gpu": num_gpu_layers},
+                        "keep_alive": "1h",
                     },
-                    timeout=30
+                    timeout=30,
                 )
             else:
                 # Chat/generation model
@@ -177,12 +168,10 @@ class SOLLOLGPUController:
                     json={
                         "model": model_name,
                         "prompt": "warmup",
-                        "options": {
-                            "num_gpu": num_gpu_layers
-                        },
-                        "keep_alive": "1h"
+                        "options": {"num_gpu": num_gpu_layers},
+                        "keep_alive": "1h",
                     },
-                    timeout=30
+                    timeout=30,
                 )
 
             time.sleep(2)
@@ -190,35 +179,29 @@ class SOLLOLGPUController:
             # Step 3: Verify GPU loading
             status = self.get_model_status(node_url)
 
-            for model in status.get('models', []):
-                if model_name in model['name']:
-                    if 'GPU' in model['location']:
+            for model in status.get("models", []):
+                if model_name in model["name"]:
+                    if "GPU" in model["location"]:
                         logger.info(f"✅ {model_name} now on GPU ({model['vram_mb']:.1f}MB)")
                         return {
-                            'success': True,
-                            'message': f"✅ {model_name} on GPU",
-                            'location': model['location'],
-                            'vram_mb': model['vram_mb']
+                            "success": True,
+                            "message": f"✅ {model_name} on GPU",
+                            "location": model["location"],
+                            "vram_mb": model["vram_mb"],
                         }
                     else:
                         logger.warning(f"⚠️  {model_name} still on CPU (may need more VRAM)")
                         return {
-                            'success': False,
-                            'message': f"⚠️  {model_name} on CPU (insufficient VRAM?)",
-                            'location': model['location']
+                            "success": False,
+                            "message": f"⚠️  {model_name} on CPU (insufficient VRAM?)",
+                            "location": model["location"],
                         }
 
-            return {
-                'success': False,
-                'message': f"⚠️  {model_name} not found after reload"
-            }
+            return {"success": False, "message": f"⚠️  {model_name} not found after reload"}
 
         except Exception as e:
             logger.error(f"Error forcing GPU load: {e}")
-            return {
-                'success': False,
-                'message': f"❌ Error: {str(e)}"
-            }
+            return {"success": False, "message": f"❌ Error: {str(e)}"}
 
     def force_cpu_load(self, node_url: str, model_name: str) -> Dict:
         """
@@ -238,23 +221,21 @@ class SOLLOLGPUController:
 
             # Unload
             requests.post(
-                f"{node_url}/api/generate",
-                json={"model": model_name, "keep_alive": 0},
-                timeout=10
+                f"{node_url}/api/generate", json={"model": model_name, "keep_alive": 0}, timeout=10
             )
             time.sleep(2)
 
             # Reload with CPU-only
-            if 'embed' in model_name.lower():
+            if "embed" in model_name.lower():
                 requests.post(
                     f"{node_url}/api/embed",
                     json={
                         "model": model_name,
                         "input": "warmup",
                         "options": {"num_gpu": 0},
-                        "keep_alive": "1h"
+                        "keep_alive": "1h",
                     },
-                    timeout=30
+                    timeout=30,
                 )
             else:
                 requests.post(
@@ -263,35 +244,32 @@ class SOLLOLGPUController:
                         "model": model_name,
                         "prompt": "warmup",
                         "options": {"num_gpu": 0},
-                        "keep_alive": "1h"
+                        "keep_alive": "1h",
                     },
-                    timeout=30
+                    timeout=30,
                 )
 
             time.sleep(2)
 
             # Verify
             status = self.get_model_status(node_url)
-            for model in status.get('models', []):
-                if model_name in model['name']:
+            for model in status.get("models", []):
+                if model_name in model["name"]:
                     logger.info(f"✅ {model_name} now on CPU")
                     return {
-                        'success': True,
-                        'message': f"✅ {model_name} on CPU",
-                        'location': model['location']
+                        "success": True,
+                        "message": f"✅ {model_name} on CPU",
+                        "location": model["location"],
                     }
 
-            return {'success': False, 'message': "Model not found"}
+            return {"success": False, "message": "Model not found"}
 
         except Exception as e:
             logger.error(f"Error forcing CPU load: {e}")
-            return {'success': False, 'message': f"Error: {str(e)}"}
+            return {"success": False, "message": f"Error: {str(e)}"}
 
     def verify_routing_decision(
-        self,
-        node_url: str,
-        model_name: str,
-        expected_location: str = 'GPU'
+        self, node_url: str, model_name: str, expected_location: str = "GPU"
     ) -> bool:
         """
         Verify that a model is where the router expected it to be.
@@ -308,9 +286,9 @@ class SOLLOLGPUController:
         """
         status = self.get_model_status(node_url)
 
-        for model in status.get('models', []):
-            if model_name in model['name']:
-                actual_location = 'GPU' if 'GPU' in model['location'] else 'CPU'
+        for model in status.get("models", []):
+            if model_name in model["name"]:
+                actual_location = "GPU" if "GPU" in model["location"] else "CPU"
 
                 if actual_location == expected_location:
                     logger.debug(f"✅ Verified: {model_name} on {expected_location} at {node_url}")
@@ -326,9 +304,7 @@ class SOLLOLGPUController:
         return False
 
     def pre_warm_gpu_nodes(
-        self,
-        priority_models: List[str],
-        max_concurrent: int = 3
+        self, priority_models: List[str], max_concurrent: int = 3
     ) -> Dict[str, List[Dict]]:
         """
         Pre-warm GPU nodes with critical models.
@@ -365,20 +341,14 @@ class SOLLOLGPUController:
                     break
 
                 result = self.force_gpu_load(node_url, model)
-                node_results.append({
-                    'model': model,
-                    'result': result
-                })
+                node_results.append({"model": model, "result": result})
 
             report[node_url] = node_results
 
         logger.info(f"✅ Pre-warming complete for {len(gpu_nodes)} GPU nodes")
         return report
 
-    def optimize_cluster(
-        self,
-        gpu_priority_models: List[str]
-    ) -> Dict:
+    def optimize_cluster(self, gpu_priority_models: List[str]) -> Dict:
         """
         Optimize model placement across the cluster.
 
@@ -395,33 +365,26 @@ class SOLLOLGPUController:
         """
         if not self.registry:
             logger.error("No NodeRegistry set, cannot optimize")
-            return {'error': 'No registry configured'}
+            return {"error": "No registry configured"}
 
         logger.info("🔧 Optimizing cluster GPU/CPU assignments")
 
-        report = {
-            'gpu_nodes': [],
-            'cpu_nodes': [],
-            'assignments': []
-        }
+        report = {"gpu_nodes": [], "cpu_nodes": [], "assignments": []}
 
         # Classify nodes
         for node in self.registry.nodes.values():
             if node.capabilities.has_gpu:
-                report['gpu_nodes'].append(node.url)
+                report["gpu_nodes"].append(node.url)
             else:
-                report['cpu_nodes'].append(node.url)
+                report["cpu_nodes"].append(node.url)
 
         # Assign priority models to GPU nodes
         for model_name in gpu_priority_models:
-            for gpu_node_url in report['gpu_nodes']:
+            for gpu_node_url in report["gpu_nodes"]:
                 result = self.force_gpu_load(gpu_node_url, model_name)
-                report['assignments'].append({
-                    'node': gpu_node_url,
-                    'model': model_name,
-                    'target': 'GPU',
-                    'result': result
-                })
+                report["assignments"].append(
+                    {"node": gpu_node_url, "model": model_name, "target": "GPU", "result": result}
+                )
 
         logger.info(f"✅ Cluster optimization complete")
         return report
@@ -432,20 +395,20 @@ class SOLLOLGPUController:
             logger.error("No NodeRegistry set")
             return
 
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("🌐 SOLLOL CLUSTER GPU/CPU STATUS")
-        print("="*70)
+        print("=" * 70)
 
         for node in self.registry.nodes.values():
             node_url = node.url
             status = self.get_model_status(node_url)
 
-            if 'error' in status:
+            if "error" in status:
                 print(f"\n❌ {node.name} ({node_url}): {status['error']}")
                 continue
 
-            gpu_count = status.get('gpu_count', 0)
-            cpu_count = status.get('cpu_count', 0)
+            gpu_count = status.get("gpu_count", 0)
+            cpu_count = status.get("cpu_count", 0)
             total = gpu_count + cpu_count
 
             if gpu_count > 0:
@@ -455,15 +418,15 @@ class SOLLOLGPUController:
 
             print(f"\n{node_type} {node.name} ({node_url}):")
 
-            for model in status.get('models', []):
-                location_emoji = "🚀" if "GPU" in model['location'] else "🐢"
+            for model in status.get("models", []):
+                location_emoji = "🚀" if "GPU" in model["location"] else "🐢"
                 print(f"   {location_emoji} {model['name']}")
                 print(f"      Location: {model['location']}")
                 print(f"      Size: {model['size_mb']:.1f} MB")
-                if model['vram_mb'] > 0:
+                if model["vram_mb"] > 0:
                     print(f"      VRAM: {model['vram_mb']:.1f} MB")
 
-        print("="*70 + "\n")
+        print("=" * 70 + "\n")
 
     def get_placement_stats(self) -> Dict:
         """
@@ -473,15 +436,15 @@ class SOLLOLGPUController:
             Statistics dictionary
         """
         total = len(self.placement_history)
-        gpu_count = sum(1 for p in self.placement_history.values() if 'GPU' in p.location)
+        gpu_count = sum(1 for p in self.placement_history.values() if "GPU" in p.location)
         cpu_count = total - gpu_count
 
         return {
-            'total_placements': total,
-            'gpu_placements': gpu_count,
-            'cpu_placements': cpu_count,
-            'gpu_percentage': (gpu_count / total * 100) if total > 0 else 0,
-            'recent_placements': list(self.placement_history.values())[-10:]
+            "total_placements": total,
+            "gpu_placements": gpu_count,
+            "cpu_placements": cpu_count,
+            "gpu_percentage": (gpu_count / total * 100) if total > 0 else 0,
+            "recent_placements": list(self.placement_history.values())[-10:],
         }
 
 
@@ -503,12 +466,7 @@ def integrate_with_router(router, gpu_controller, node_registry):
     gpu_controller.set_registry(node_registry)
 
     # Pre-warm common embedding models on GPU nodes
-    priority_models = [
-        "mxbai-embed-large",
-        "nomic-embed-text",
-        "llama3.1",
-        "llama3.2"
-    ]
+    priority_models = ["mxbai-embed-large", "nomic-embed-text", "llama3.1", "llama3.2"]
 
     logger.info("🔗 Integrating GPU controller with intelligent router")
     gpu_controller.pre_warm_gpu_nodes(priority_models, max_concurrent=2)

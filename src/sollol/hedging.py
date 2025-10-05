@@ -24,10 +24,11 @@ Don't use when:
 import asyncio
 import logging
 import time
-import requests
-from typing import List, Dict, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class HedgeResult:
     """Result from hedged request."""
+
     winner_node: str
     response: Any
     latency_ms: float
@@ -51,10 +53,7 @@ class HedgingStrategy:
     """
 
     def __init__(
-        self,
-        num_hedges: int = 2,
-        hedge_delay_ms: float = 0,
-        enable_cancellation: bool = True
+        self, num_hedges: int = 2, hedge_delay_ms: float = 0, enable_cancellation: bool = True
     ):
         """
         Initialize hedging strategy.
@@ -75,11 +74,7 @@ class HedgingStrategy:
         self.latency_improvements = []
 
     def hedge_request(
-        self,
-        nodes: List[str],
-        request_fn,
-        request_args: Dict[str, Any],
-        timeout_ms: float = 30000
+        self, nodes: List[str], request_fn, request_args: Dict[str, Any], timeout_ms: float = 30000
     ) -> HedgeResult:
         """
         Send hedged request to multiple nodes, return fastest.
@@ -96,11 +91,10 @@ class HedgingStrategy:
         start_time = time.time()
 
         # Select top N nodes for hedging
-        hedge_nodes = nodes[:self.num_hedges]
+        hedge_nodes = nodes[: self.num_hedges]
 
         logger.info(
-            f"🏁 Hedging request across {len(hedge_nodes)} nodes: "
-            f"{[n for n in hedge_nodes]}"
+            f"🏁 Hedging request across {len(hedge_nodes)} nodes: " f"{[n for n in hedge_nodes]}"
         )
 
         # Execute requests in parallel
@@ -118,11 +112,7 @@ class HedgingStrategy:
                     time.sleep(self.hedge_delay_ms / 1000.0)
 
                 future = executor.submit(
-                    self._execute_request,
-                    node_url,
-                    request_fn,
-                    request_args,
-                    timeout_ms
+                    self._execute_request, node_url, request_fn, request_args, timeout_ms
                 )
                 futures[future] = node_url
 
@@ -163,9 +153,7 @@ class HedgingStrategy:
 
         total_latency = (time.time() - start_time) * 1000
 
-        cancelled_nodes = [
-            url for url in hedge_nodes if url != winner_node
-        ]
+        cancelled_nodes = [url for url in hedge_nodes if url != winner_node]
 
         result = HedgeResult(
             winner_node=winner_node,
@@ -173,7 +161,7 @@ class HedgingStrategy:
             latency_ms=winner_latency,
             num_requests_sent=len(hedge_nodes),
             num_responses_received=responses_received,
-            cancelled_nodes=cancelled_nodes
+            cancelled_nodes=cancelled_nodes,
         )
 
         # Update statistics
@@ -189,11 +177,7 @@ class HedgingStrategy:
         return result
 
     def _execute_request(
-        self,
-        node_url: str,
-        request_fn,
-        request_args: Dict[str, Any],
-        timeout_ms: float
+        self, node_url: str, request_fn, request_args: Dict[str, Any], timeout_ms: float
     ) -> Tuple[Any, float]:
         """
         Execute single request with timing.
@@ -229,21 +213,23 @@ class HedgingStrategy:
         """
         waste_percentage = (
             (self.total_wasted_requests / self.total_hedge_requests * 100)
-            if self.total_hedge_requests > 0 else 0
+            if self.total_hedge_requests > 0
+            else 0
         )
 
         avg_latency_improvement = (
             sum(self.latency_improvements) / len(self.latency_improvements)
-            if self.latency_improvements else 0
+            if self.latency_improvements
+            else 0
         )
 
         return {
-            'total_requests': self.total_requests,
-            'total_hedge_requests': self.total_hedge_requests,
-            'total_wasted_requests': self.total_wasted_requests,
-            'waste_percentage': waste_percentage,
-            'avg_latency_improvement_ms': avg_latency_improvement,
-            'num_hedges_per_request': self.num_hedges,
+            "total_requests": self.total_requests,
+            "total_hedge_requests": self.total_hedge_requests,
+            "total_wasted_requests": self.total_wasted_requests,
+            "waste_percentage": waste_percentage,
+            "avg_latency_improvement_ms": avg_latency_improvement,
+            "num_hedges_per_request": self.num_hedges,
         }
 
 
@@ -267,12 +253,7 @@ class AdaptiveHedging:
         self.base_strategy = base_strategy
         self.hedge_threshold_ms = 100  # Hedge if expected latency > 100ms
 
-    def should_hedge(
-        self,
-        task_context,
-        estimated_latency_ms: float,
-        cluster_load: float
-    ) -> bool:
+    def should_hedge(self, task_context, estimated_latency_ms: float, cluster_load: float) -> bool:
         """
         Decide whether to hedge this request.
 
@@ -297,17 +278,14 @@ class AdaptiveHedging:
             return True
 
         # Hedge for complex tasks
-        if task_context.complexity == 'complex':
+        if task_context.complexity == "complex":
             return True
 
         return False
 
 
 def create_hedge_request_wrapper(
-    base_url: str,
-    endpoint: str,
-    payload: Dict[str, Any],
-    timeout: float = 30
+    base_url: str, endpoint: str, payload: Dict[str, Any], timeout: float = 30
 ):
     """
     Create a wrapper function for hedged HTTP requests.
@@ -321,13 +299,10 @@ def create_hedge_request_wrapper(
     Returns:
         Function that takes node_url and executes request
     """
+
     def request_fn(node_url: str) -> Any:
         """Execute request on specific node."""
-        response = requests.post(
-            f"{node_url}{endpoint}",
-            json=payload,
-            timeout=timeout
-        )
+        response = requests.post(f"{node_url}{endpoint}", json=payload, timeout=timeout)
 
         if response.status_code == 200:
             return response.json()
@@ -339,10 +314,7 @@ def create_hedge_request_wrapper(
 
 # Example usage for embedding
 def hedge_embed_request(
-    nodes: List[str],
-    model: str,
-    text: str,
-    num_hedges: int = 2
+    nodes: List[str], model: str, text: str, num_hedges: int = 2
 ) -> HedgeResult:
     """
     Hedge an embedding request across multiple nodes.
@@ -360,20 +332,12 @@ def hedge_embed_request(
 
     # Create request wrapper
     request_fn = create_hedge_request_wrapper(
-        base_url="",
-        endpoint="/api/embed",
-        payload={
-            'model': model,
-            'input': text
-        }
+        base_url="", endpoint="/api/embed", payload={"model": model, "input": text}
     )
 
     # Execute hedged request
     result = strategy.hedge_request(
-        nodes=nodes,
-        request_fn=request_fn,
-        request_args={},
-        timeout_ms=30000
+        nodes=nodes, request_fn=request_fn, request_args={}, timeout_ms=30000
     )
 
     return result
@@ -381,10 +345,7 @@ def hedge_embed_request(
 
 # Example usage for chat
 def hedge_chat_request(
-    nodes: List[str],
-    model: str,
-    messages: List[Dict[str, str]],
-    num_hedges: int = 2
+    nodes: List[str], model: str, messages: List[Dict[str, str]], num_hedges: int = 2
 ) -> HedgeResult:
     """
     Hedge a chat request across multiple nodes.
@@ -404,19 +365,12 @@ def hedge_chat_request(
     request_fn = create_hedge_request_wrapper(
         base_url="",
         endpoint="/api/chat",
-        payload={
-            'model': model,
-            'messages': messages,
-            'stream': False
-        }
+        payload={"model": model, "messages": messages, "stream": False},
     )
 
     # Execute hedged request
     result = strategy.hedge_request(
-        nodes=nodes,
-        request_fn=request_fn,
-        request_args={},
-        timeout_ms=60000
+        nodes=nodes, request_fn=request_fn, request_args={}, timeout_ms=60000
     )
 
     return result

@@ -3,12 +3,14 @@ Authentication and authorization for SOLLOL.
 
 Provides API key-based authentication and role-based access control.
 """
-from typing import Optional, List
-from fastapi import HTTPException, Security
-from fastapi.security import APIKeyHeader
-from dataclasses import dataclass
+
 import hashlib
 import secrets
+from dataclasses import dataclass
+from typing import List, Optional
+
+from fastapi import HTTPException, Security
+from fastapi.security import APIKeyHeader
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -16,6 +18,7 @@ API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 @dataclass
 class APIKey:
     """API key with permissions."""
+
     key_hash: str
     name: str
     permissions: List[str]
@@ -37,12 +40,7 @@ class AuthManager:
         self.api_keys: dict[str, APIKey] = {}
         self.request_counts: dict[str, int] = {}
 
-    def create_api_key(
-        self,
-        name: str,
-        permissions: List[str],
-        rate_limit: int = 1000
-    ) -> str:
+    def create_api_key(self, name: str, permissions: List[str], rate_limit: int = 1000) -> str:
         """
         Create a new API key.
 
@@ -61,10 +59,7 @@ class AuthManager:
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 
         self.api_keys[key_hash] = APIKey(
-            key_hash=key_hash,
-            name=name,
-            permissions=permissions,
-            rate_limit=rate_limit
+            key_hash=key_hash, name=name, permissions=permissions, rate_limit=rate_limit
         )
 
         return raw_key
@@ -167,26 +162,17 @@ async def verify_api_key(api_key: str = Security(API_KEY_HEADER)) -> APIKey:
         HTTPException: If API key is invalid or missing
     """
     if not api_key:
-        raise HTTPException(
-            status_code=401,
-            detail="Missing API key. Include X-API-Key header."
-        )
+        raise HTTPException(status_code=401, detail="Missing API key. Include X-API-Key header.")
 
     auth = get_auth_manager()
     key_obj = auth.verify_api_key(api_key)
 
     if not key_obj:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid API key"
-        )
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
     # Check rate limit
     if not auth.check_rate_limit(api_key):
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded"
-        )
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     return key_obj
 
@@ -203,13 +189,13 @@ async def require_permission(permission: str):
         ):
             return {"message": "Admin action executed"}
     """
+
     async def check(api_key: str = Security(API_KEY_HEADER)):
         key_obj = await verify_api_key(api_key)
 
         if "admin" not in key_obj.permissions and permission not in key_obj.permissions:
             raise HTTPException(
-                status_code=403,
-                detail=f"Missing required permission: {permission}"
+                status_code=403, detail=f"Missing required permission: {permission}"
             )
 
     return check

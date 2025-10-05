@@ -3,8 +3,8 @@
 Install SOLLOL RPC server as systemd user service
 """
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -13,7 +13,7 @@ def install_rpc_service():
 
     # Get user home directory
     home = Path.home()
-    user = os.environ.get('USER', os.environ.get('USERNAME'))
+    user = os.environ.get("USER", os.environ.get("USERNAME"))
 
     # Find rpc-server binary
     rpc_server_paths = [

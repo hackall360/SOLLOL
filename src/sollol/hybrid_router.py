@@ -19,12 +19,12 @@ Ollama's simple API.
 """
 
 import logging
-from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
-from .pool import OllamaPool
 from .llama_cpp_coordinator import LlamaCppCoordinator, RPCBackend
 from .ollama_gguf_resolver import OllamaGGUFResolver
+from .pool import OllamaPool
 from .rpc_registry import RPCBackendRegistry
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ModelProfile:
     """Profile of a model's resource requirements."""
+
     name: str
     parameter_count: int  # Billion parameters
     estimated_memory_gb: float
@@ -53,15 +54,15 @@ MODEL_PROFILES = {
     "mistral:7b": ModelProfile("mistral:7b", 7, 5.0, False, 32),
     "llama2:7b": ModelProfile("llama2:7b", 7, 5.0, False, 32),
     "llama2:13b": ModelProfile("llama2:13b", 13, 9.0, False, 40),
-    "codellama:13b": ModelProfile("codellama:13b", 13, 7.4, True, 40),  # Force distributed for testing
-
+    "codellama:13b": ModelProfile(
+        "codellama:13b", 13, 7.4, True, 40
+    ),  # Force distributed for testing
     # Medium models (might fit on large single GPU)
     "llama2:70b": ModelProfile("llama2:70b", 70, 40.0, True, 80),
     "llama3:70b": ModelProfile("llama3:70b", 70, 40.0, True, 80),
     "llama3.1:70b": ModelProfile("llama3.1:70b", 70, 40.0, True, 80),
     "mixtral:8x7b": ModelProfile("mixtral:8x7b", 47, 26.0, True, 32),
     "qwen2.5:72b": ModelProfile("qwen2.5:72b", 72, 42.0, True, 80),
-
     # Large models (REQUIRE distributed)
     "llama3.1:405b": ModelProfile("llama3.1:405b", 405, 230.0, True, 126),
     "mixtral:8x22b": ModelProfile("mixtral:8x22b", 141, 80.0, True, 56),
@@ -95,7 +96,7 @@ class HybridRouter:
         auto_discover_rpc: bool = True,
         auto_setup_rpc: bool = False,
         num_rpc_backends: int = 1,
-        auto_fallback: bool = True
+        auto_fallback: bool = True,
     ):
         """
         Initialize hybrid router with automatic GGUF resolution from Ollama.
@@ -122,6 +123,7 @@ class HybridRouter:
         if rpc_backends is None and enable_distributed and auto_discover_rpc:
             logger.info("🔍 Auto-discovering RPC backends...")
             from .rpc_discovery import auto_discover_rpc_backends
+
             discovered = auto_discover_rpc_backends()
             if discovered:
                 rpc_backends = discovered
@@ -133,11 +135,10 @@ class HybridRouter:
                 if auto_setup_rpc:
                     logger.info("🚀 Attempting to auto-setup RPC backends...")
                     from .rpc_auto_setup import auto_setup_rpc_backends
+
                     try:
                         setup_backends = auto_setup_rpc_backends(
-                            num_backends=num_rpc_backends,
-                            auto_build=True,
-                            discover_network=False
+                            num_backends=num_rpc_backends, auto_build=True, discover_network=False
                         )
                         if setup_backends:
                             rpc_backends = setup_backends
@@ -216,7 +217,9 @@ class HybridRouter:
 
         # Stop existing coordinator if serving different model
         if self.coordinator and self.coordinator_model != model:
-            logger.info(f"Stopping coordinator (switching from {self.coordinator_model} to {model})")
+            logger.info(
+                f"Stopping coordinator (switching from {self.coordinator_model} to {model})"
+            )
             await self.coordinator.stop()
             self.coordinator = None
 
@@ -224,10 +227,7 @@ class HybridRouter:
         if not self.coordinator:
             # Convert dict configs to RPCBackend objects
             backends = [
-                RPCBackend(
-                    host=backend['host'],
-                    port=backend.get('port', 50052)
-                )
+                RPCBackend(host=backend["host"], port=backend.get("port", 50052))
                 for backend in self.rpc_backends
             ]
 
@@ -236,7 +236,7 @@ class HybridRouter:
                 model_path=gguf_path,
                 rpc_backends=backends,
                 host=self.coordinator_host,
-                port=self.coordinator_port
+                port=self.coordinator_port,
             )
 
             # Start coordinator
@@ -294,7 +294,7 @@ class HybridRouter:
             return MODEL_PROFILES[model_key]
 
         # Try without tag
-        base_model = model_key.split(':')[0]
+        base_model = model_key.split(":")[0]
         if base_model in MODEL_PROFILES:
             return MODEL_PROFILES[base_model]
 
@@ -309,21 +309,21 @@ class HybridRouter:
         param_count = 8  # Default assumption
 
         # Common patterns
-        if '405b' in model_lower:
+        if "405b" in model_lower:
             param_count = 405
-        elif '70b' in model_lower:
+        elif "70b" in model_lower:
             param_count = 70
-        elif '34b' in model_lower:
+        elif "34b" in model_lower:
             param_count = 34
-        elif '13b' in model_lower:
+        elif "13b" in model_lower:
             param_count = 13
-        elif '8b' in model_lower:
+        elif "8b" in model_lower:
             param_count = 8
-        elif '7b' in model_lower:
+        elif "7b" in model_lower:
             param_count = 7
-        elif '3b' in model_lower:
+        elif "3b" in model_lower:
             param_count = 3
-        elif '1b' in model_lower:
+        elif "1b" in model_lower:
             param_count = 1
 
         # Estimate memory (rough: ~600MB per billion parameters)
@@ -342,14 +342,11 @@ class HybridRouter:
             parameter_count=param_count,
             estimated_memory_gb=estimated_memory,
             requires_distributed=requires_distributed,
-            num_layers=max(32, param_count)  # Rough estimate
+            num_layers=max(32, param_count),  # Rough estimate
         )
 
     async def route_request(
-        self,
-        model: str,
-        messages: List[Dict[str, str]],
-        **kwargs
+        self, model: str, messages: List[Dict[str, str]], **kwargs
     ) -> Dict[str, Any]:
         """
         Route request to appropriate backend with intelligent fallback.
@@ -395,7 +392,9 @@ class HybridRouter:
                 except Exception as e:
                     # Unexpected error - try RPC fallback if enabled
                     if self.auto_fallback and self.enable_distributed:
-                        logger.warning(f"⚠️  Ollama failed unexpectedly for '{model}': {str(e)[:100]}")
+                        logger.warning(
+                            f"⚠️  Ollama failed unexpectedly for '{model}': {str(e)[:100]}"
+                        )
                         logger.info(f"🔗 Falling back to RPC model sharding...")
                         result = await self._route_to_llamacpp(model, messages, **kwargs)
                         self.routing_cache[model] = True
@@ -411,7 +410,9 @@ class HybridRouter:
                     return result
                 else:
                     # No RPC available - try Ollama anyway (may fail)
-                    logger.warning(f"⚠️  '{model}' may not fit on Ollama nodes, but no RPC available")
+                    logger.warning(
+                        f"⚠️  '{model}' may not fit on Ollama nodes, but no RPC available"
+                    )
                     result = await self._route_to_ollama(model, messages, **kwargs)
                     self.routing_cache[model] = False
                     return result
@@ -426,10 +427,7 @@ class HybridRouter:
         raise RuntimeError("No backends available for routing")
 
     async def _route_to_ollama(
-        self,
-        model: str,
-        messages: List[Dict[str, str]],
-        **kwargs
+        self, model: str, messages: List[Dict[str, str]], **kwargs
     ) -> Dict[str, Any]:
         """Route to Ollama pool for task distribution (load balancing)."""
         if not self.ollama_pool:
@@ -438,22 +436,16 @@ class HybridRouter:
         # Convert messages to prompt if needed
         if isinstance(messages, list) and len(messages) > 0:
             # Use pool's chat method
-            priority = kwargs.pop('priority', 5)
+            priority = kwargs.pop("priority", 5)
             result = self.ollama_pool.chat(
-                model=model,
-                messages=messages,
-                priority=priority,
-                **kwargs
+                model=model, messages=messages, priority=priority, **kwargs
             )
             return result
         else:
             raise ValueError("Invalid messages format")
 
     async def _route_to_llamacpp(
-        self,
-        model: str,
-        messages: List[Dict[str, str]],
-        **kwargs
+        self, model: str, messages: List[Dict[str, str]], **kwargs
     ) -> Dict[str, Any]:
         """
         Route to llama.cpp for model sharding (distribute layers across RPC backends).
@@ -470,43 +462,36 @@ class HybridRouter:
         # Use the coordinator's chat method (which uses /v1/chat/completions endpoint)
         result = await self.coordinator.chat(
             messages=messages,
-            max_tokens=kwargs.get('max_tokens', 512),
-            temperature=kwargs.get('temperature', 0.7)
+            max_tokens=kwargs.get("max_tokens", 512),
+            temperature=kwargs.get("temperature", 0.7),
         )
 
         # Convert to Ollama-style response
         return self._convert_llamacpp_to_ollama(result, model)
 
-    def _convert_llamacpp_to_ollama(
-        self,
-        llamacpp_result: Dict,
-        model: str
-    ) -> Dict[str, Any]:
+    def _convert_llamacpp_to_ollama(self, llamacpp_result: Dict, model: str) -> Dict[str, Any]:
         """Convert llama.cpp response to Ollama format."""
         # llama.cpp /v1/chat/completions returns OpenAI-compatible format
         # Extract the message content
-        choices = llamacpp_result.get('choices', [])
+        choices = llamacpp_result.get("choices", [])
         if choices:
-            message = choices[0].get('message', {})
-            content = message.get('content', '')
+            message = choices[0].get("message", {})
+            content = message.get("content", "")
         else:
-            content = ''
+            content = ""
 
         # Build Ollama-style response
         return {
-            'model': model,
-            'message': {
-                'role': 'assistant',
-                'content': content
+            "model": model,
+            "message": {"role": "assistant", "content": content},
+            "done": True,
+            "_routing": {
+                "mode": "model_sharding",
+                "backend": "llama.cpp-rpc",
+                "coordinator": f"{self.coordinator.host}:{self.coordinator.port}",
+                "rpc_backends": len(self.coordinator.rpc_backends),
+                "description": "Model layers distributed across RPC backends",
             },
-            'done': True,
-            '_routing': {
-                'mode': 'model_sharding',
-                'backend': 'llama.cpp-rpc',
-                'coordinator': f"{self.coordinator.host}:{self.coordinator.port}",
-                'rpc_backends': len(self.coordinator.rpc_backends),
-                'description': 'Model layers distributed across RPC backends'
-            }
         }
 
     async def _check_if_model_fits_ollama(self, model: str) -> bool:
@@ -531,7 +516,9 @@ class HybridRouter:
         # Account for context, KV cache, etc.
         required_gb = estimated_gb * 1.5  # 50% safety margin
 
-        logger.info(f"📊 Model '{model}' estimated size: {estimated_gb:.1f}GB (with margin: {required_gb:.1f}GB)")
+        logger.info(
+            f"📊 Model '{model}' estimated size: {estimated_gb:.1f}GB (with margin: {required_gb:.1f}GB)"
+        )
 
         # Check if any Ollama node has sufficient memory
         # Heuristic for routing:
@@ -548,27 +535,27 @@ class HybridRouter:
     def get_stats(self) -> Dict[str, Any]:
         """Get routing statistics for both distribution modes."""
         stats = {
-            'task_distribution': {
-                'enabled': self.ollama_pool is not None,
-                'description': 'Load balance agent requests across Ollama nodes'
+            "task_distribution": {
+                "enabled": self.ollama_pool is not None,
+                "description": "Load balance agent requests across Ollama nodes",
             },
-            'model_sharding': {
-                'enabled': self.enable_distributed,
-                'description': 'Distribute large models across llama.cpp RPC backends'
+            "model_sharding": {
+                "enabled": self.enable_distributed,
+                "description": "Distribute large models across llama.cpp RPC backends",
             },
-            'routing_cache': {
-                'cached_models': len(self.routing_cache),
-                'ollama_models': [m for m, use_rpc in self.routing_cache.items() if not use_rpc],
-                'rpc_models': [m for m, use_rpc in self.routing_cache.items() if use_rpc]
-            }
+            "routing_cache": {
+                "cached_models": len(self.routing_cache),
+                "ollama_models": [m for m, use_rpc in self.routing_cache.items() if not use_rpc],
+                "rpc_models": [m for m, use_rpc in self.routing_cache.items() if use_rpc],
+            },
         }
 
         if self.ollama_pool:
-            stats['task_distribution']['ollama_stats'] = self.ollama_pool.get_stats()
+            stats["task_distribution"]["ollama_stats"] = self.ollama_pool.get_stats()
 
         if self.coordinator:
-            stats['model_sharding']['coordinator_active'] = True
-            stats['model_sharding']['model_loaded'] = self.coordinator_model
-            stats['model_sharding']['rpc_backends'] = len(self.coordinator.rpc_backends)
+            stats["model_sharding"]["coordinator_active"] = True
+            stats["model_sharding"]["model_loaded"] = self.coordinator_model
+            stats["model_sharding"]["rpc_backends"] = len(self.coordinator.rpc_backends)
 
         return stats

@@ -8,17 +8,17 @@ This script helps you:
 3. Start RPC servers
 """
 
-import os
-import sys
-import subprocess
 import argparse
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 
 def check_cmake():
     """Check if cmake is installed."""
     try:
-        result = subprocess.run(['cmake', '--version'], capture_output=True, text=True)
+        result = subprocess.run(["cmake", "--version"], capture_output=True, text=True)
         return result.returncode == 0
     except FileNotFoundError:
         return False
@@ -33,9 +33,9 @@ def clone_llama_cpp(install_dir):
     """Clone llama.cpp repository."""
     print("📥 Cloning llama.cpp...")
     result = subprocess.run(
-        ['git', 'clone', 'https://github.com/ggerganov/llama.cpp', install_dir],
+        ["git", "clone", "https://github.com/ggerganov/llama.cpp", install_dir],
         capture_output=True,
-        text=True
+        text=True,
     )
     return result.returncode == 0
 
@@ -49,10 +49,10 @@ def build_llama_cpp(llama_dir):
     # Configure
     print("   Configuring with CMake...")
     result = subprocess.run(
-        ['cmake', '-B', 'build', '-DGGML_RPC=ON', '-DLLAMA_CURL=OFF'],
+        ["cmake", "-B", "build", "-DGGML_RPC=ON", "-DLLAMA_CURL=OFF"],
         cwd=llama_dir,
         capture_output=True,
-        text=True
+        text=True,
     )
 
     if result.returncode != 0:
@@ -62,13 +62,23 @@ def build_llama_cpp(llama_dir):
     # Build
     print("   Building...")
     import multiprocessing
+
     nproc = multiprocessing.cpu_count()
 
     result = subprocess.run(
-        ['cmake', '--build', 'build', '--config', 'Release', '--target', 'rpc-server', f'-j{nproc}'],
+        [
+            "cmake",
+            "--build",
+            "build",
+            "--config",
+            "Release",
+            "--target",
+            "rpc-server",
+            f"-j{nproc}",
+        ],
         cwd=llama_dir,
         capture_output=True,
-        text=True
+        text=True,
     )
 
     if result.returncode != 0:
@@ -79,7 +89,7 @@ def build_llama_cpp(llama_dir):
     return True
 
 
-def start_rpc_server(llama_dir, host='0.0.0.0', port=50052, mem_gb=None):
+def start_rpc_server(llama_dir, host="0.0.0.0", port=50052, mem_gb=None):
     """Start llama.cpp RPC server."""
     rpc_server = Path(llama_dir) / "build" / "bin" / "rpc-server"
 
@@ -88,9 +98,9 @@ def start_rpc_server(llama_dir, host='0.0.0.0', port=50052, mem_gb=None):
         print("   Please build llama.cpp first with --build")
         return False
 
-    cmd = [str(rpc_server), '--host', host, '--port', str(port)]
+    cmd = [str(rpc_server), "--host", host, "--port", str(port)]
     if mem_gb:
-        cmd.extend(['--mem', str(mem_gb * 1024)])
+        cmd.extend(["--mem", str(mem_gb * 1024)])
 
     print(f"🚀 Starting RPC server on {host}:{port}...")
     print(f"   Command: {' '.join(cmd)}")
@@ -110,58 +120,31 @@ def main():
     )
 
     parser.add_argument(
-        '--install-dir',
-        default=os.path.expanduser('~/llama.cpp'),
-        help='Directory to install llama.cpp (default: ~/llama.cpp)'
+        "--install-dir",
+        default=os.path.expanduser("~/llama.cpp"),
+        help="Directory to install llama.cpp (default: ~/llama.cpp)",
+    )
+
+    parser.add_argument("--clone", action="store_true", help="Clone llama.cpp repository")
+
+    parser.add_argument("--build", action="store_true", help="Build llama.cpp with RPC support")
+
+    parser.add_argument("--start", action="store_true", help="Start RPC server")
+
+    parser.add_argument("--host", default="0.0.0.0", help="RPC server host (default: 0.0.0.0)")
+
+    parser.add_argument("--port", type=int, default=50052, help="RPC server port (default: 50052)")
+
+    parser.add_argument("--mem", type=int, help="Memory limit in GB (optional)")
+
+    parser.add_argument(
+        "--all", action="store_true", help="Clone, build, and install systemd service (full setup)"
     )
 
     parser.add_argument(
-        '--clone',
-        action='store_true',
-        help='Clone llama.cpp repository'
-    )
-
-    parser.add_argument(
-        '--build',
-        action='store_true',
-        help='Build llama.cpp with RPC support'
-    )
-
-    parser.add_argument(
-        '--start',
-        action='store_true',
-        help='Start RPC server'
-    )
-
-    parser.add_argument(
-        '--host',
-        default='0.0.0.0',
-        help='RPC server host (default: 0.0.0.0)'
-    )
-
-    parser.add_argument(
-        '--port',
-        type=int,
-        default=50052,
-        help='RPC server port (default: 50052)'
-    )
-
-    parser.add_argument(
-        '--mem',
-        type=int,
-        help='Memory limit in GB (optional)'
-    )
-
-    parser.add_argument(
-        '--all',
-        action='store_true',
-        help='Clone, build, and install systemd service (full setup)'
-    )
-
-    parser.add_argument(
-        '--service',
-        action='store_true',
-        help='Install as systemd service (recommended for production)'
+        "--service",
+        action="store_true",
+        help="Install as systemd service (recommended for production)",
     )
 
     args = parser.parse_args()
@@ -205,6 +188,7 @@ def main():
 
         # Copy to ~/.local/bin for easy systemd access
         import shutil
+
         local_bin = Path.home() / ".local/bin"
         local_bin.mkdir(parents=True, exist_ok=True)
         rpc_server_src = Path(install_dir) / "build/bin/rpc-server"
@@ -224,6 +208,7 @@ def main():
         # Import and run systemd installer
         try:
             from sollol.install_systemd_service import install_rpc_service
+
             if not install_rpc_service():
                 return 1
         except ImportError:
@@ -250,9 +235,9 @@ def main():
     # No args - show help
     if not (args.clone or args.build or args.start or args.all):
         parser.print_help()
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("QUICK START:")
-        print("="*70)
+        print("=" * 70)
         print("\n1. Full setup (clone + build + start):")
         print("   python setup_llama_cpp.py --all")
         print("\n2. Just start (if already built):")
@@ -269,5 +254,5 @@ def main():
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

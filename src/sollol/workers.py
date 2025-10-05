@@ -1,10 +1,14 @@
 """
 Ray actor wrapper for OLLOL (Ollama) requests with performance tracking.
 """
-import ray
-import httpx
+
 import time
+
+import httpx
+import ray
+
 from sollol.metrics import record_host_request
+
 
 @ray.remote
 class OllamaWorker:
@@ -59,8 +63,7 @@ class OllamaWorker:
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
-                    f"http://{host}/api/embeddings",
-                    json={"model": model, "prompt": text}
+                    f"http://{host}/api/embeddings", json={"model": model, "prompt": text}
                 )
                 resp.raise_for_status()
                 success = True

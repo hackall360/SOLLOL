@@ -1,8 +1,10 @@
 """
 SOLLOL Configuration - Application-level configuration management.
 """
-from typing import List, Optional, Literal
+
 from dataclasses import dataclass, field
+from typing import List, Literal, Optional
+
 
 @dataclass
 class SOLLOLConfig:

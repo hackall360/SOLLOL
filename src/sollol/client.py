@@ -6,10 +6,12 @@ Simple one-line integration:
     sollol = SOLLOLClient()
     response = sollol.chat("Hello!")
 """
-from typing import List, Dict, Optional, Any
-import httpx
+
 import logging
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,7 @@ class SOLLOLClient:
         model: Optional[str] = None,
         priority: Optional[int] = None,
         system_prompt: Optional[str] = None,
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
     ) -> Dict[str, Any]:
         """
         Send a chat message with intelligent routing.
@@ -84,15 +86,10 @@ class SOLLOLClient:
 
         messages.append({"role": "user", "content": message})
 
-        payload = {
-            "model": model or self.config.default_model,
-            "messages": messages
-        }
+        payload = {"model": model or self.config.default_model, "messages": messages}
 
         response = self.client.post(
-            "/api/chat",
-            params={"priority": priority or self.config.default_priority},
-            json=payload
+            "/api/chat", params={"priority": priority or self.config.default_priority}, json=payload
         )
         response.raise_for_status()
         return response.json()
@@ -103,13 +100,12 @@ class SOLLOLClient:
         model: Optional[str] = None,
         priority: Optional[int] = None,
         system_prompt: Optional[str] = None,
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
     ) -> Dict[str, Any]:
         """Async version of chat()."""
         if self._async_client is None:
             self._async_client = httpx.AsyncClient(
-                base_url=self.config.base_url,
-                timeout=self.config.timeout
+                base_url=self.config.base_url, timeout=self.config.timeout
             )
 
         messages = []
@@ -122,24 +118,15 @@ class SOLLOLClient:
 
         messages.append({"role": "user", "content": message})
 
-        payload = {
-            "model": model or self.config.default_model,
-            "messages": messages
-        }
+        payload = {"model": model or self.config.default_model, "messages": messages}
 
         response = await self._async_client.post(
-            "/api/chat",
-            params={"priority": priority or self.config.default_priority},
-            json=payload
+            "/api/chat", params={"priority": priority or self.config.default_priority}, json=payload
         )
         response.raise_for_status()
         return response.json()
 
-    def embed(
-        self,
-        text: str,
-        model: str = "nomic-embed-text"
-    ) -> List[float]:
+    def embed(self, text: str, model: str = "nomic-embed-text") -> List[float]:
         """
         Get embeddings for text.
 
@@ -155,18 +142,11 @@ class SOLLOLClient:
             >>> len(vector)
             768
         """
-        response = self.client.post(
-            "/api/embed",
-            json={"text": text, "model": model}
-        )
+        response = self.client.post("/api/embed", json={"text": text, "model": model})
         response.raise_for_status()
         return response.json()["embedding"]
 
-    def batch_embed(
-        self,
-        documents: List[str],
-        model: str = "nomic-embed-text"
-    ) -> Dict:
+    def batch_embed(self, documents: List[str], model: str = "nomic-embed-text") -> Dict:
         """
         Queue documents for batch embedding (via Dask).
 
@@ -183,10 +163,7 @@ class SOLLOLClient:
             >>> print(status['count'])
             3
         """
-        response = self.client.post(
-            "/api/embed/batch",
-            json={"docs": documents, "model": model}
-        )
+        response = self.client.post("/api/embed/batch", json={"docs": documents, "model": model})
         response.raise_for_status()
         return response.json()
 
@@ -238,6 +215,7 @@ class SOLLOLClient:
         self.client.close()
         if self._async_client:
             import asyncio
+
             asyncio.run(self._async_client.aclose())
 
     def __enter__(self):
@@ -309,7 +287,7 @@ class Ollama:
         host: Optional[str] = None,
         port: Optional[int] = None,
         enable_distributed: bool = False,
-        rpc_nodes: Optional[List[Dict[str, Any]]] = None
+        rpc_nodes: Optional[List[Dict[str, Any]]] = None,
     ):
         """
         Initialize Ollama client with optional distributed inference.
@@ -345,18 +323,15 @@ class Ollama:
             self.hybrid_router = HybridRouter(
                 ollama_pool=self.pool,
                 rpc_backends=rpc_nodes,  # Just pass the dicts directly
-                enable_distributed=True
+                enable_distributed=True,
             )
 
             logger.info("🚀 Ollama client initialized with distributed inference support")
-            logger.info("   Models will be auto-resolved from Ollama storage (no GGUF paths needed!)")
+            logger.info(
+                "   Models will be auto-resolved from Ollama storage (no GGUF paths needed!)"
+            )
 
-    def chat(
-        self,
-        model: str,
-        messages: Any,  # Can be str or List[Dict]
-        **kwargs
-    ) -> str:
+    def chat(self, model: str, messages: Any, **kwargs) -> str:  # Can be str or List[Dict]
         """
         Chat completion with automatic routing.
 
@@ -390,22 +365,16 @@ class Ollama:
         if self.hybrid_router:
             # Use hybrid router for intelligent backend selection
             import asyncio
-            result = asyncio.run(
-                self.hybrid_router.route_request(model, messages, **kwargs)
-            )
+
+            result = asyncio.run(self.hybrid_router.route_request(model, messages, **kwargs))
         else:
             # Use standard Ollama pool
             result = self.pool.chat(model=model, messages=messages, **kwargs)
 
         # Extract text from response
-        return result.get('message', {}).get('content', '')
+        return result.get("message", {}).get("content", "")
 
-    def generate(
-        self,
-        model: str,
-        prompt: str,
-        **kwargs
-    ) -> str:
+    def generate(self, model: str, prompt: str, **kwargs) -> str:
         """
         Generate text.
 
@@ -423,14 +392,9 @@ class Ollama:
             >>> print(text)
         """
         result = self.pool.generate(model=model, prompt=prompt, **kwargs)
-        return result.get('response', '')
+        return result.get("response", "")
 
-    def embed(
-        self,
-        model: str,
-        text: str,
-        **kwargs
-    ) -> List[float]:
+    def embed(self, model: str, text: str, **kwargs) -> List[float]:
         """
         Generate embeddings.
 
@@ -451,7 +415,11 @@ class Ollama:
         result = self.pool.embed(model=model, input=text, **kwargs)
 
         # Handle different response formats
-        embeddings = result.get('embeddings', [[]])[0] if result.get('embeddings') else result.get('embedding', [])
+        embeddings = (
+            result.get("embeddings", [[]])[0]
+            if result.get("embeddings")
+            else result.get("embedding", [])
+        )
         return embeddings
 
     def get_stats(self) -> Dict[str, Any]:

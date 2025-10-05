@@ -12,11 +12,12 @@ Architecture:
 """
 
 import asyncio
+import json
 import logging
 import struct
-import json
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class LlamaCppNode:
     """Represents a llama.cpp RPC server node."""
+
     host: str
     port: int
     model_path: str = ""
@@ -84,9 +86,7 @@ class LlamaCppRPCClient:
             return {}
 
     async def generate(
-        self,
-        prompt: str,
-        options: Optional[Dict[str, Any]] = None
+        self, prompt: str, options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Generate text using this node's layers.
@@ -98,17 +98,10 @@ class LlamaCppRPCClient:
         Returns:
             Response with generated text or activations
         """
-        payload = {
-            "prompt": prompt,
-            "stream": False,
-            **(options or {})
-        }
+        payload = {"prompt": prompt, "stream": False, **(options or {})}
 
         try:
-            response = await self.client.post(
-                f"{self.node.http_url}/completion",
-                json=payload
-            )
+            response = await self.client.post(f"{self.node.http_url}/completion", json=payload)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -137,10 +130,7 @@ class LlamaCppDistributedCluster:
     """
 
     def __init__(
-        self,
-        nodes: List[LlamaCppNode],
-        model_name: str = "distributed",
-        timeout: float = 300.0
+        self, nodes: List[LlamaCppNode], model_name: str = "distributed", timeout: float = 300.0
     ):
         """
         Initialize distributed cluster.
@@ -156,24 +146,21 @@ class LlamaCppDistributedCluster:
         self.clients = [LlamaCppRPCClient(node, timeout) for node in nodes]
 
         logger.info(
-            f"Initialized llama.cpp distributed cluster '{model_name}' "
-            f"with {len(nodes)} nodes"
+            f"Initialized llama.cpp distributed cluster '{model_name}' " f"with {len(nodes)} nodes"
         )
 
     async def health_check(self) -> bool:
         """Check if all nodes are healthy."""
         health_checks = await asyncio.gather(
-            *[client.health_check() for client in self.clients],
-            return_exceptions=True
+            *[client.health_check() for client in self.clients], return_exceptions=True
         )
 
-        all_healthy = all(
-            isinstance(h, bool) and h for h in health_checks
-        )
+        all_healthy = all(isinstance(h, bool) and h for h in health_checks)
 
         if not all_healthy:
             unhealthy = [
-                node.url for node, h in zip(self.nodes, health_checks)
+                node.url
+                for node, h in zip(self.nodes, health_checks)
                 if not (isinstance(h, bool) and h)
             ]
             logger.warning(f"Unhealthy nodes: {unhealthy}")
@@ -181,9 +168,7 @@ class LlamaCppDistributedCluster:
         return all_healthy
 
     async def generate(
-        self,
-        prompt: str,
-        options: Optional[Dict[str, Any]] = None
+        self, prompt: str, options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Run distributed inference across all nodes.
@@ -216,14 +201,11 @@ class LlamaCppDistributedCluster:
         result = await self.clients[0].generate(prompt, options)
 
         # Add cluster metadata
-        result['_distributed'] = {
-            'cluster': self.model_name,
-            'nodes': len(self.nodes),
-            'node_urls': [node.url for node in self.nodes],
-            'layers_per_node': [
-                f"{node.layers_start}-{node.layers_end}"
-                for node in self.nodes
-            ]
+        result["_distributed"] = {
+            "cluster": self.model_name,
+            "nodes": len(self.nodes),
+            "node_urls": [node.url for node in self.nodes],
+            "layers_per_node": [f"{node.layers_start}-{node.layers_end}" for node in self.nodes],
         }
 
         logger.info(f"✅ Distributed inference completed on '{self.model_name}'")
@@ -232,10 +214,7 @@ class LlamaCppDistributedCluster:
 
     async def close(self):
         """Close all client connections."""
-        await asyncio.gather(
-            *[client.close() for client in self.clients],
-            return_exceptions=True
-        )
+        await asyncio.gather(*[client.close() for client in self.clients], return_exceptions=True)
 
     async def __aenter__(self):
         return self
@@ -250,20 +229,16 @@ MODEL_PATH_MAP = {
     "llama3.1:405b": "models/llama-3.1-405b-instruct.gguf",
     "llama3.1:70b": "models/llama-3.1-70b-instruct.gguf",
     "llama3.1:8b": "models/llama-3.1-8b-instruct.gguf",
-
     # Llama 3 models
     "llama3:70b": "models/llama-3-70b-instruct.gguf",
     "llama3:8b": "models/llama-3-8b-instruct.gguf",
-
     # Llama 2 models
     "llama2:70b": "models/llama-2-70b-chat.gguf",
     "llama2:13b": "models/llama-2-13b-chat.gguf",
     "llama2:7b": "models/llama-2-7b-chat.gguf",
-
     # Mixtral
     "mixtral:8x7b": "models/mixtral-8x7b-instruct.gguf",
     "mixtral:8x22b": "models/mixtral-8x22b-instruct.gguf",
-
     # Qwen
     "qwen2.5:72b": "models/qwen-2.5-72b-instruct.gguf",
 }
@@ -287,7 +262,7 @@ def resolve_model_path(ollama_model_name: str) -> str:
         return MODEL_PATH_MAP[model_name]
 
     # Try without tag (e.g., "llama3.1" -> "llama3.1:latest")
-    if ':' not in model_name:
+    if ":" not in model_name:
         model_with_tag = f"{model_name}:latest"
         if model_with_tag in MODEL_PATH_MAP:
             return MODEL_PATH_MAP[model_with_tag]

@@ -4,11 +4,13 @@ Task prioritization and queue management.
 Ensures high-priority requests get processed first while maintaining
 fairness and preventing starvation of lower-priority tasks.
 """
+
 import asyncio
-from typing import Dict, Callable, Any, Optional
+import heapq
 from dataclasses import dataclass, field
 from datetime import datetime
-import heapq
+from typing import Any, Callable, Dict, Optional
+
 
 @dataclass
 class PrioritizedTask:
@@ -19,6 +21,7 @@ class PrioritizedTask:
     1. Priority (higher first)
     2. Age (older first, prevents starvation)
     """
+
     priority: int
     timestamp: float
     task_id: str
@@ -31,6 +34,7 @@ class PrioritizedTask:
             return self.priority > other.priority
         # If same priority, older tasks go first (FIFO within priority)
         return self.timestamp < other.timestamp
+
 
 class PriorityQueue:
     """
@@ -54,10 +58,7 @@ class PriorityQueue:
         self.queue_wait_times: Dict[int, list] = {}  # priority -> wait times
 
     async def enqueue(
-        self,
-        payload: Dict,
-        priority: int = 5,
-        task_id: Optional[str] = None
+        self, payload: Dict, priority: int = 5, task_id: Optional[str] = None
     ) -> asyncio.Future:
         """
         Add task to priority queue.
@@ -86,7 +87,7 @@ class PriorityQueue:
                 timestamp=asyncio.get_event_loop().time(),
                 task_id=task_id,
                 payload=payload,
-                future=future
+                future=future,
             )
 
             heapq.heappush(self.queue, task)
@@ -115,8 +116,7 @@ class PriorityQueue:
 
             # Keep only last 100 measurements per priority
             if len(self.queue_wait_times[task.priority]) > 100:
-                self.queue_wait_times[task.priority] = \
-                    self.queue_wait_times[task.priority][-100:]
+                self.queue_wait_times[task.priority] = self.queue_wait_times[task.priority][-100:]
 
             self.total_processed += 1
 
@@ -139,33 +139,34 @@ class PriorityQueue:
             # Count tasks by priority in current queue
             priority_counts = {}
             for task in self.queue:
-                priority_counts[task.priority] = \
-                    priority_counts.get(task.priority, 0) + 1
+                priority_counts[task.priority] = priority_counts.get(task.priority, 0) + 1
 
             return {
-                'queue_size': len(self.queue),
-                'total_queued': self.total_queued,
-                'total_processed': self.total_processed,
-                'avg_wait_times_ms': {
-                    p: t * 1000 for p, t in avg_wait_times.items()
-                },
-                'current_priorities': priority_counts,
-                'utilization': len(self.queue) / self.max_size if self.max_size > 0 else 0,
+                "queue_size": len(self.queue),
+                "total_queued": self.total_queued,
+                "total_processed": self.total_processed,
+                "avg_wait_times_ms": {p: t * 1000 for p, t in avg_wait_times.items()},
+                "current_priorities": priority_counts,
+                "utilization": len(self.queue) / self.max_size if self.max_size > 0 else 0,
             }
+
 
 # Global priority queue
 _priority_queue = PriorityQueue(max_queue_size=1000)
+
 
 def get_priority_queue() -> PriorityQueue:
     """Get the global priority queue instance."""
     return _priority_queue
 
+
 # Priority levels for common task types
 PRIORITY_CRITICAL = 10  # System-critical requests
-PRIORITY_HIGH = 8       # User-facing real-time requests
-PRIORITY_NORMAL = 5     # Standard requests
-PRIORITY_LOW = 3        # Background tasks
-PRIORITY_BATCH = 1      # Batch processing
+PRIORITY_HIGH = 8  # User-facing real-time requests
+PRIORITY_NORMAL = 5  # Standard requests
+PRIORITY_LOW = 3  # Background tasks
+PRIORITY_BATCH = 1  # Batch processing
+
 
 def get_priority_for_task_type(task_type: str) -> int:
     """
@@ -178,12 +179,12 @@ def get_priority_for_task_type(task_type: str) -> int:
         Recommended priority (1-10)
     """
     priority_map = {
-        'classification': PRIORITY_HIGH,     # Fast, user-facing
-        'extraction': PRIORITY_NORMAL,       # Medium importance
-        'generation': PRIORITY_NORMAL,       # Standard
-        'embedding': PRIORITY_LOW,           # Can be batched
-        'summarization': PRIORITY_NORMAL,    # Standard
-        'analysis': PRIORITY_NORMAL,         # Standard
+        "classification": PRIORITY_HIGH,  # Fast, user-facing
+        "extraction": PRIORITY_NORMAL,  # Medium importance
+        "generation": PRIORITY_NORMAL,  # Standard
+        "embedding": PRIORITY_LOW,  # Can be batched
+        "summarization": PRIORITY_NORMAL,  # Standard
+        "analysis": PRIORITY_NORMAL,  # Standard
     }
 
     return priority_map.get(task_type, PRIORITY_NORMAL)

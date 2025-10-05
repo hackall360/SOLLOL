@@ -4,13 +4,14 @@ SOLLOL Main Orchestration Class - Application-friendly API.
 This module provides a programmatic interface for applications to configure
 and control SOLLOL entirely from within Python code, without CLI or external configs.
 """
+
 import asyncio
 import threading
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, Optional
 
+from sollol.cluster import start_dask, start_ray
 from sollol.config import SOLLOLConfig
-from sollol.cluster import start_ray, start_dask
 
 
 class SOLLOL:
@@ -64,9 +65,10 @@ class SOLLOL:
 
         # Configure logging
         import logging
+
         logging.basicConfig(
             level=self.config.log_level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         )
         self.logger = logging.getLogger(__name__)
 
@@ -93,28 +95,24 @@ class SOLLOL:
         self.logger.info("Initializing clusters...")
 
         # Create temporary hosts file from config
-        import tempfile
         import os
+        import tempfile
 
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
             for host in self.config.hosts:
                 f.write(f"{host}\n")
             hosts_file = f.name
 
         try:
             # Initialize Ray cluster
-            self._ray_actors = start_ray(
-                workers=self.config.ray_workers,
-                hosts_file=hosts_file
-            )
+            self._ray_actors = start_ray(workers=self.config.ray_workers, hosts_file=hosts_file)
 
             if not self._ray_actors:
                 raise RuntimeError("Failed to initialize Ray workers")
 
             # Initialize Dask cluster
             self._dask_client = start_dask(
-                workers=self.config.dask_workers,
-                scheduler_address=self.config.dask_scheduler
+                workers=self.config.dask_workers, scheduler_address=self.config.dask_scheduler
             )
 
             self._initialized = True
@@ -156,15 +154,14 @@ class SOLLOL:
             self._start_gateway()
         else:
             # Run gateway in background thread
-            self._gateway_thread = threading.Thread(
-                target=self._start_gateway,
-                daemon=True
-            )
+            self._gateway_thread = threading.Thread(target=self._start_gateway, daemon=True)
             self._gateway_thread.start()
             self._running = True
             self.logger.info(f"Gateway started in background")
             self.logger.info(f"API available at http://localhost:{self.config.gateway_port}")
-            self.logger.info(f"Metrics available at http://localhost:{self.config.metrics_port}/metrics")
+            self.logger.info(
+                f"Metrics available at http://localhost:{self.config.metrics_port}/metrics"
+            )
 
     def _start_gateway(self):
         """Internal method to start the FastAPI gateway."""
@@ -179,7 +176,7 @@ class SOLLOL:
             enable_autobatch=self.config.autobatch_enabled,
             autobatch_interval=self.config.autobatch_interval,
             enable_adaptive_metrics=self.config.adaptive_metrics_enabled,
-            adaptive_metrics_interval=self.config.adaptive_metrics_interval
+            adaptive_metrics_interval=self.config.adaptive_metrics_interval,
         )
 
     def stop(self):
@@ -237,8 +234,12 @@ class SOLLOL:
 
         # Warn about changes that require restart
         restart_required_keys = {
-            "ray_workers", "dask_workers", "dask_scheduler",
-            "hosts", "gateway_port", "metrics_port"
+            "ray_workers",
+            "dask_workers",
+            "dask_scheduler",
+            "hosts",
+            "gateway_port",
+            "metrics_port",
         }
         if any(key in restart_required_keys for key in kwargs.keys()):
             self.logger.warning("\nSome changes require restarting SOLLOL to take effect:")
@@ -274,7 +275,7 @@ class SOLLOL:
                 "health": f"http://localhost:{self.config.gateway_port}/api/health",
                 "stats": f"http://localhost:{self.config.gateway_port}/api/stats",
                 "metrics": f"http://localhost:{self.config.metrics_port}/metrics",
-            }
+            },
         }
 
     def get_health(self) -> Dict[str, Any]:
@@ -292,10 +293,7 @@ class SOLLOL:
         import httpx
 
         try:
-            resp = httpx.get(
-                f"http://localhost:{self.config.gateway_port}/api/health",
-                timeout=5.0
-            )
+            resp = httpx.get(f"http://localhost:{self.config.gateway_port}/api/health", timeout=5.0)
             return resp.json()
         except Exception as e:
             return {"error": str(e)}
@@ -315,10 +313,7 @@ class SOLLOL:
         import httpx
 
         try:
-            resp = httpx.get(
-                f"http://localhost:{self.config.gateway_port}/api/stats",
-                timeout=5.0
-            )
+            resp = httpx.get(f"http://localhost:{self.config.gateway_port}/api/stats", timeout=5.0)
             return resp.json()
         except Exception as e:
             return {"error": str(e)}

@@ -3,10 +3,12 @@ RPC Backend Registry - Health monitoring and metrics for RPC backends.
 
 Similar to OllamaNodeRegistry but for llama.cpp RPC servers used in model sharding.
 """
-import time
+
 import logging
-from typing import Dict, List, Optional
+import time
 from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+
 from sollol.rpc_discovery import check_rpc_server
 
 logger = logging.getLogger(__name__)
@@ -15,6 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RPCMetrics:
     """Performance metrics for an RPC backend."""
+
     total_requests: int = 0
     total_failures: int = 0
     total_latency_ms: float = 0.0
@@ -39,6 +42,7 @@ class RPCMetrics:
 @dataclass
 class RPCBackend:
     """Represents a single RPC backend with health and metrics."""
+
     host: str
     port: int
     metrics: RPCMetrics = field(default_factory=RPCMetrics)
@@ -97,8 +101,8 @@ class RPCBackend:
                 "total_failures": self.metrics.total_failures,
                 "avg_latency_ms": self.metrics.avg_latency,
                 "success_rate": self.metrics.success_rate,
-                "last_check": self.metrics.last_health_check
-            }
+                "last_check": self.metrics.last_health_check,
+            },
         }
 
 
@@ -173,8 +177,8 @@ class RPCBackendRegistry:
             healthy,
             key=lambda b: (
                 -b.metrics.success_rate,  # Higher success rate = better
-                b.metrics.avg_latency     # Lower latency = better
-            )
+                b.metrics.avg_latency,  # Lower latency = better
+            ),
         )
 
     def health_check_all(self, timeout: float = 1.0) -> Dict[str, bool]:
@@ -192,9 +196,7 @@ class RPCBackendRegistry:
             results[address] = backend.check_health(timeout=timeout)
 
         healthy_count = sum(1 for h in results.values() if h)
-        logger.info(
-            f"Health check: {healthy_count}/{len(results)} RPC backends healthy"
-        )
+        logger.info(f"Health check: {healthy_count}/{len(results)} RPC backends healthy")
 
         return results
 
@@ -205,7 +207,7 @@ class RPCBackendRegistry:
         stats = {
             "total_backends": len(self.backends),
             "healthy_backends": len(healthy),
-            "backends": []
+            "backends": [],
         }
 
         for backend in self.backends.values():
@@ -221,9 +223,6 @@ class RPCBackendRegistry:
             rpc_backends: List of {"host": "...", "port": ...} dicts
         """
         for config in rpc_backends:
-            self.add_backend(
-                host=config['host'],
-                port=config.get('port', 50052)
-            )
+            self.add_backend(host=config["host"], port=config.get("port", 50052))
 
         logger.info(f"Loaded {len(rpc_backends)} RPC backends from config")

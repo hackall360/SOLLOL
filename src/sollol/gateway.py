@@ -9,31 +9,34 @@ This is the ONLY Ollama-compatible gateway with:
 - Intelligent routing (small models → Ollama, large models → llama.cpp)
 - Zero-config setup
 """
-from fastapi import FastAPI, Request, HTTPException
+
 import asyncio
+import logging
 import os
 from datetime import datetime
-from typing import Optional, Dict, List
-import logging
+from typing import Dict, List, Optional
 
-from sollol.pool import OllamaPool
+from fastapi import FastAPI, HTTPException, Request
+
 from sollol.hybrid_router import HybridRouter
+from sollol.pool import OllamaPool
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="SOLLOL Gateway",
-    description="Two independent distribution modes: task distribution (load balancing) OR model sharding (distributed inference) OR BOTH"
+    description="Two independent distribution modes: task distribution (load balancing) OR model sharding (distributed inference) OR BOTH",
 )
 
 # Global instances
 _ollama_pool: Optional[OllamaPool] = None
 _hybrid_router: Optional[HybridRouter] = None
 
+
 def start_api(
     port: int = 11434,
     rpc_backends: Optional[List[Dict]] = None,
-    ollama_nodes: Optional[List[Dict]] = None
+    ollama_nodes: Optional[List[Dict]] = None,
 ):
     """
     Start SOLLOL gateway - Drop-in Ollama replacement with two distribution modes.
@@ -91,10 +94,13 @@ def start_api(
             # Auto-discover RPC backends if not explicitly configured
             logger.info("🔍 Auto-discovering RPC backends on network (for model sharding)...")
             from sollol.rpc_discovery import auto_discover_rpc_backends
+
             rpc_backends = auto_discover_rpc_backends()
 
             if rpc_backends:
-                logger.info(f"✅ Auto-discovered {len(rpc_backends)} RPC backends for model sharding")
+                logger.info(
+                    f"✅ Auto-discovered {len(rpc_backends)} RPC backends for model sharding"
+                )
             else:
                 logger.info("📡 No RPC backends found (model sharding disabled)")
 
@@ -104,7 +110,9 @@ def start_api(
     _ollama_pool = OllamaPool(nodes=ollama_nodes, exclude_localhost=True)
 
     if len(_ollama_pool.nodes) > 0:
-        logger.info(f"✅ Ollama pool initialized with {len(_ollama_pool.nodes)} remote nodes for task distribution")
+        logger.info(
+            f"✅ Ollama pool initialized with {len(_ollama_pool.nodes)} remote nodes for task distribution"
+        )
     else:
         logger.info("📡 No remote Ollama nodes found (task distribution disabled)")
         logger.info("   To enable task distribution: run Ollama on other machines in your network")
@@ -117,7 +125,7 @@ def start_api(
         _hybrid_router = HybridRouter(
             ollama_pool=_ollama_pool,
             rpc_backends=rpc_backends,
-            enable_distributed=True  # Enables model sharding
+            enable_distributed=True,  # Enables model sharding
         )
         logger.info("✅ Hybrid routing enabled: small → Ollama, large → llama.cpp sharding")
     else:
@@ -127,11 +135,13 @@ def start_api(
 
     # Start FastAPI server
     import uvicorn
+
     logger.info(f"🌐 Starting gateway on port {port}")
     logger.info(f"   API docs: http://localhost:{port}/docs")
     logger.info(f"   Health check: http://localhost:{port}/api/health")
 
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 @app.post("/api/chat")
 async def chat_endpoint(request: Request):
@@ -191,12 +201,12 @@ async def chat_endpoint(request: Request):
     except FileNotFoundError as e:
         # Model not found in Ollama storage
         raise HTTPException(
-            status_code=404,
-            detail=f"Model not found: {str(e)}. Pull with: ollama pull {model}"
+            status_code=404, detail=f"Model not found: {str(e)}. Pull with: ollama pull {model}"
         )
     except Exception as e:
         logger.error(f"Chat endpoint error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/generate")
 async def generate_endpoint(request: Request):
@@ -226,6 +236,7 @@ async def generate_endpoint(request: Request):
         logger.error(f"Generate endpoint error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/health")
 async def health_check():
     """
@@ -240,24 +251,27 @@ async def health_check():
         "task_distribution": {
             "enabled": _ollama_pool is not None and len(_ollama_pool.nodes) > 0,
             "ollama_nodes": len(_ollama_pool.nodes) if _ollama_pool else 0,
-            "description": "Load balance agent requests across Ollama nodes"
+            "description": "Load balance agent requests across Ollama nodes",
         },
         "model_sharding": {
             "enabled": _hybrid_router is not None,
             "coordinator_running": False,
             "rpc_backends": 0,
-            "description": "Distribute large models via llama.cpp RPC backends"
+            "description": "Distribute large models via llama.cpp RPC backends",
         },
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
     }
 
     # Check model sharding coordinator status
     if _hybrid_router and _hybrid_router.coordinator:
         health_status["model_sharding"]["coordinator_running"] = True
-        health_status["model_sharding"]["rpc_backends"] = len(_hybrid_router.coordinator.rpc_backends)
+        health_status["model_sharding"]["rpc_backends"] = len(
+            _hybrid_router.coordinator.rpc_backends
+        )
         health_status["model_sharding"]["model_loaded"] = _hybrid_router.coordinator_model
 
     return health_status
+
 
 @app.get("/api/stats")
 def stats_endpoint():
@@ -269,9 +283,7 @@ def stats_endpoint():
         - Model Sharding status (llama.cpp RPC backends)
         - Hybrid routing decisions
     """
-    stats = {
-        "timestamp": datetime.now().isoformat()
-    }
+    stats = {"timestamp": datetime.now().isoformat()}
 
     # Ollama pool stats
     if _ollama_pool:
@@ -283,6 +295,7 @@ def stats_endpoint():
 
     return stats
 
+
 @app.get("/")
 async def root():
     """Root endpoint with quick start guide."""
@@ -291,27 +304,27 @@ async def root():
         "version": "2.0",
         "distribution_modes": {
             "task_distribution": "Load balance agent requests across Ollama nodes (parallel execution)",
-            "model_sharding": "Distribute large models via llama.cpp RPC backends (single model, multiple nodes)"
+            "model_sharding": "Distribute large models via llama.cpp RPC backends (single model, multiple nodes)",
         },
         "features": [
             "Task Distribution - Load balance across Ollama nodes",
             "Model Sharding - Distribute 70B+ models via llama.cpp",
             "Automatic GGUF extraction from Ollama storage",
             "Intelligent routing (small → Ollama, large → llama.cpp)",
-            "Zero-config setup"
+            "Zero-config setup",
         ],
         "endpoints": {
             "chat": "POST /api/chat",
             "generate": "POST /api/generate",
             "health": "GET /api/health",
             "stats": "GET /api/stats",
-            "docs": "GET /docs"
+            "docs": "GET /docs",
         },
         "quick_start": {
             "1_pull_model": "ollama pull llama3.2",
             "2_start_gateway": "export RPC_BACKENDS=192.168.1.10:50052,192.168.1.11:50052 && python -m sollol.gateway",
-            "3_make_request": "curl -X POST http://localhost:8000/api/chat -d '{\"model\": \"llama3.1:405b\", \"messages\": [{\"role\": \"user\", \"content\": \"Hello!\"}]}'"
-        }
+            "3_make_request": 'curl -X POST http://localhost:8000/api/chat -d \'{"model": "llama3.1:405b", "messages": [{"role": "user", "content": "Hello!"}]}\'',
+        },
     }
 
 
@@ -321,8 +334,7 @@ if __name__ == "__main__":
 
     # Configure logging
     logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Parse command line args
