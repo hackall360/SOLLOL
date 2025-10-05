@@ -1,10 +1,12 @@
 """
-FastAPI gateway with performance-aware routing, distributed inference, and GGUF auto-extraction.
+FastAPI gateway with two independent distribution modes.
 
 This is the ONLY Ollama-compatible gateway with:
-- TRUE distributed inference (via llama.cpp)
+- Task Distribution: Load balance agent requests across Ollama nodes (parallel execution)
+- Model Sharding: Distribute large models via llama.cpp RPC backends (single model, multiple nodes)
+- Both modes can be enabled simultaneously for optimal performance
 - Automatic GGUF extraction from Ollama storage
-- Intelligent routing (Ollama pool vs distributed cluster)
+- Intelligent routing (small models → Ollama, large models → llama.cpp)
 - Zero-config setup
 """
 from fastapi import FastAPI, Request, HTTPException
@@ -20,8 +22,8 @@ from sollol.hybrid_router import HybridRouter
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="SynapticLlamas Gateway",
-    description="Distributed AI orchestration with automatic model sharding"
+    title="SOLLOL Gateway",
+    description="Two independent distribution modes: task distribution (load balancing) OR model sharding (distributed inference) OR BOTH"
 )
 
 # Global instances
@@ -34,29 +36,37 @@ def start_api(
     ollama_nodes: Optional[List[Dict]] = None
 ):
     """
-    Start SOLLOL gateway - Drop-in Ollama replacement with distributed inference.
+    Start SOLLOL gateway - Drop-in Ollama replacement with two distribution modes.
 
     SOLLOL listens on port 11434 (standard Ollama port) and provides:
-    - Intelligent load balancing across Ollama nodes
-    - Distributed inference for large models via llama.cpp
+
+    TWO INDEPENDENT DISTRIBUTION MODES (can be used together or separately):
+    1. Task Distribution - Load balance agent requests across Ollama nodes (parallel execution)
+    2. Model Sharding - Distribute large models via llama.cpp RPC backends (single model across nodes)
+
+    💡 Enable BOTH modes to get task distribution for small models AND model sharding for large models!
+
+    Features:
+    - Intelligent load balancing across Ollama nodes (task distribution)
+    - Model sharding for 70B+ models via llama.cpp (model distribution)
     - Automatic GGUF extraction from Ollama storage
     - Zero-config auto-discovery
 
     ENVIRONMENT CONFIGURATION:
         PORT - Gateway port (default: 11434, the standard Ollama port)
-        RPC_BACKENDS - Comma-separated RPC servers (e.g., "192.168.1.10:50052,192.168.1.11:50052")
-        OLLAMA_NODES - Comma-separated Ollama nodes (optional, auto-discovers if not set)
+        RPC_BACKENDS - Comma-separated RPC servers for model sharding (e.g., "192.168.1.10:50052,192.168.1.11:50052")
+        OLLAMA_NODES - Comma-separated Ollama nodes for task distribution (optional, auto-discovers if not set)
 
     Args:
         port: Port to run gateway on (default: 11434 - Ollama's port)
-        rpc_backends: List of RPC backend dicts [{"host": "ip", "port": 50052}]
-        ollama_nodes: List of Ollama node dicts (auto-discovers if None)
+        rpc_backends: List of RPC backend dicts for model sharding [{"host": "ip", "port": 50052}]
+        ollama_nodes: List of Ollama node dicts for task distribution (auto-discovers if None)
 
     Example:
         # Zero-config (auto-discovers everything):
         python -m sollol.gateway
 
-        # With manual RPC backends:
+        # With manual RPC backends for model sharding:
         export RPC_BACKENDS="192.168.1.10:50052,192.168.1.11:50052"
         python -m sollol.gateway
 
@@ -79,39 +89,40 @@ def start_api(
                     rpc_backends.append({"host": backend_str, "port": 50052})
         else:
             # Auto-discover RPC backends if not explicitly configured
-            logger.info("🔍 Auto-discovering RPC backends on network...")
+            logger.info("🔍 Auto-discovering RPC backends on network (for model sharding)...")
             from sollol.rpc_discovery import auto_discover_rpc_backends
             rpc_backends = auto_discover_rpc_backends()
 
             if rpc_backends:
-                logger.info(f"✅ Auto-discovered {len(rpc_backends)} RPC backends")
+                logger.info(f"✅ Auto-discovered {len(rpc_backends)} RPC backends for model sharding")
             else:
-                logger.info("📡 No RPC backends found (distributed inference disabled)")
+                logger.info("📡 No RPC backends found (model sharding disabled)")
 
-    # Create Ollama pool (auto-discovers remote nodes, excludes localhost since we're on 11434)
-    logger.info("🔍 Initializing Ollama pool...")
+    # Create Ollama pool for task distribution (auto-discovers remote nodes, excludes localhost)
+    logger.info("🔍 Initializing Ollama pool (for task distribution / load balancing)...")
     logger.info("   Excluding localhost (SOLLOL running on this port)")
     _ollama_pool = OllamaPool(nodes=ollama_nodes, exclude_localhost=True)
 
     if len(_ollama_pool.nodes) > 0:
-        logger.info(f"✅ Ollama pool initialized with {len(_ollama_pool.nodes)} remote nodes")
+        logger.info(f"✅ Ollama pool initialized with {len(_ollama_pool.nodes)} remote nodes for task distribution")
     else:
-        logger.info("📡 No remote Ollama nodes found (will only use distributed inference)")
-        logger.info("   To use Ollama pool: run Ollama on other machines in your network")
+        logger.info("📡 No remote Ollama nodes found (task distribution disabled)")
+        logger.info("   To enable task distribution: run Ollama on other machines in your network")
 
-    # Create hybrid router with distributed support if RPC backends configured
+    # Create hybrid router with model sharding support if RPC backends configured
     if rpc_backends:
-        logger.info(f"🚀 Enabling distributed inference with {len(rpc_backends)} RPC backends")
-        logger.info("   Models will be auto-extracted from Ollama storage!")
+        logger.info(f"🚀 Enabling MODEL SHARDING with {len(rpc_backends)} RPC backends")
+        logger.info("   Large models (70B+) will be distributed via llama.cpp")
+        logger.info("   GGUFs will be auto-extracted from Ollama storage!")
         _hybrid_router = HybridRouter(
             ollama_pool=_ollama_pool,
             rpc_backends=rpc_backends,
-            enable_distributed=True
+            enable_distributed=True  # Enables model sharding
         )
-        logger.info("✅ Hybrid routing enabled (Ollama + llama.cpp distributed)")
+        logger.info("✅ Hybrid routing enabled: small → Ollama, large → llama.cpp sharding")
     else:
-        logger.info("📡 Running in Ollama-only mode (no distributed inference)")
-        logger.info("   Set RPC_BACKENDS environment variable to enable distributed inference")
+        logger.info("📡 Running in Ollama-only mode (model sharding disabled)")
+        logger.info("   Set RPC_BACKENDS environment variable to enable model sharding")
         _hybrid_router = None
 
     # Start FastAPI server
@@ -125,17 +136,22 @@ def start_api(
 @app.post("/api/chat")
 async def chat_endpoint(request: Request):
     """
-    Chat completion with automatic distributed inference routing.
+    Chat completion with automatic routing between task distribution and model sharding.
+
+    TWO ROUTING MODES:
+    1. Task Distribution - Small/medium models routed to Ollama pool (load balanced)
+    2. Model Sharding - Large models (70B+) distributed via llama.cpp RPC backends
 
     Features:
-    - Automatic GGUF extraction from Ollama storage
-    - Intelligent routing: small models → Ollama, large models → distributed
+    - Automatic GGUF extraction from Ollama storage (for model sharding)
+    - Intelligent routing: small models → Ollama pool, large models → llama.cpp sharding
     - Zero configuration needed
     - Transparent routing metadata in response
 
     Request body:
         {
-            "model": "llama3.2",  # or "llama3.1:405b" for distributed
+            "model": "llama3.2",  # Small model → Ollama pool (task distribution)
+            # or "llama3.1:405b" for model sharding across RPC backends
             "messages": [
                 {"role": "user", "content": "Hello!"}
             ]
@@ -213,27 +229,33 @@ async def generate_endpoint(request: Request):
 @app.get("/api/health")
 async def health_check():
     """
-    Check health of gateway and Ollama/distributed backends.
+    Check health of gateway and distribution backends.
+
+    Returns status for:
+    - Task Distribution (Ollama pool for load balancing)
+    - Model Sharding (llama.cpp RPC backends for large models)
     """
     health_status = {
         "status": "healthy",
-        "ollama_pool": {
-            "enabled": _ollama_pool is not None,
-            "nodes": len(_ollama_pool.nodes) if _ollama_pool else 0
+        "task_distribution": {
+            "enabled": _ollama_pool is not None and len(_ollama_pool.nodes) > 0,
+            "ollama_nodes": len(_ollama_pool.nodes) if _ollama_pool else 0,
+            "description": "Load balance agent requests across Ollama nodes"
         },
-        "distributed_inference": {
+        "model_sharding": {
             "enabled": _hybrid_router is not None,
             "coordinator_running": False,
-            "rpc_backends": 0
+            "rpc_backends": 0,
+            "description": "Distribute large models via llama.cpp RPC backends"
         },
         "timestamp": datetime.now().isoformat()
     }
 
-    # Check distributed coordinator status
+    # Check model sharding coordinator status
     if _hybrid_router and _hybrid_router.coordinator:
-        health_status["distributed_inference"]["coordinator_running"] = True
-        health_status["distributed_inference"]["rpc_backends"] = len(_hybrid_router.coordinator.rpc_backends)
-        health_status["distributed_inference"]["model_loaded"] = _hybrid_router.coordinator_model
+        health_status["model_sharding"]["coordinator_running"] = True
+        health_status["model_sharding"]["rpc_backends"] = len(_hybrid_router.coordinator.rpc_backends)
+        health_status["model_sharding"]["model_loaded"] = _hybrid_router.coordinator_model
 
     return health_status
 
@@ -243,8 +265,8 @@ def stats_endpoint():
     Get comprehensive performance statistics.
 
     Returns:
-        - Ollama pool stats (load balancing, performance)
-        - Distributed inference status
+        - Task Distribution stats (Ollama pool load balancing, performance)
+        - Model Sharding status (llama.cpp RPC backends)
         - Hybrid routing decisions
     """
     stats = {
@@ -265,12 +287,17 @@ def stats_endpoint():
 async def root():
     """Root endpoint with quick start guide."""
     return {
-        "name": "SynapticLlamas Gateway",
+        "name": "SOLLOL Gateway",
         "version": "2.0",
+        "distribution_modes": {
+            "task_distribution": "Load balance agent requests across Ollama nodes (parallel execution)",
+            "model_sharding": "Distribute large models via llama.cpp RPC backends (single model, multiple nodes)"
+        },
         "features": [
-            "Distributed inference with automatic model sharding",
+            "Task Distribution - Load balance across Ollama nodes",
+            "Model Sharding - Distribute 70B+ models via llama.cpp",
             "Automatic GGUF extraction from Ollama storage",
-            "Intelligent load balancing across Ollama nodes",
+            "Intelligent routing (small → Ollama, large → llama.cpp)",
             "Zero-config setup"
         ],
         "endpoints": {
@@ -305,12 +332,17 @@ if __name__ == "__main__":
     print(" SOLLOL Gateway - Drop-in Ollama Replacement")
     print("=" * 70)
     print()
+    print("Distribution Modes (independent - use one, both, or neither):")
+    print("  🔀 Task Distribution - Load balance across Ollama nodes (parallel execution)")
+    print("  🔗 Model Sharding - Distribute large models via llama.cpp RPC (single model)")
+    print("  💡 Enable BOTH for task distribution (small models) + model sharding (large models)")
+    print()
     print("Features:")
     print("  ✅ Listens on port 11434 (standard Ollama port)")
-    print("  ✅ Auto-discovers Ollama nodes on network")
-    print("  ✅ Auto-discovers RPC backends for distributed inference")
+    print("  ✅ Auto-discovers Ollama nodes (for task distribution)")
+    print("  ✅ Auto-discovers RPC backends (for model sharding)")
     print("  ✅ Automatic GGUF extraction from Ollama storage")
-    print("  ✅ Intelligent load balancing and routing")
+    print("  ✅ Intelligent routing: small → Ollama, large → llama.cpp")
     print("  ✅ Zero-config setup")
     print()
     print("Configuration:")
@@ -319,7 +351,7 @@ if __name__ == "__main__":
     rpc_env = os.getenv("RPC_BACKENDS", "")
     if rpc_env:
         print(f"  RPC_BACKENDS: {rpc_env}")
-        print("  → Distributed inference ENABLED (manual config)")
+        print("  → Model Sharding ENABLED (manual config)")
     else:
         print("  RPC_BACKENDS: (not set)")
         print("  → Auto-discovery mode (scans network for RPC servers)")

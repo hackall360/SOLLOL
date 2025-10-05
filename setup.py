@@ -8,7 +8,7 @@ long_description = (this_directory / "README.md").read_text() if (this_directory
 
 setup(
     name="sollol",
-    version="0.3.2",
+    version="0.3.5",
     author="BenevolentJoker-JohnL",
     author_email="benevolentjoker@gmail.com",
     description="Super Ollama Load Balancer with Intelligent Routing and Distributed Inference",
@@ -42,6 +42,8 @@ setup(
         "httpx>=0.24.0",
         "ipaddress>=1.0.23",
         "dask[distributed]>=2024.1.0",
+        "ray[default]>=2.0.0",
+        "prometheus-client>=0.12.0",
         "rich>=13.7.0",
         "flask>=2.0.0",
         "flask-cors>=4.0.0",
@@ -63,6 +65,7 @@ setup(
         "console_scripts": [
             "sollol=sollol.cli:main",
             "sollol-setup-llama-cpp=sollol.setup_llama_cpp:main",
+            "sollol-install-service=sollol.install_systemd_service:main",
         ],
     },
     include_package_data=True,

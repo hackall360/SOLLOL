@@ -48,12 +48,13 @@ from sollol.llama_cpp_coordinator import LlamaCppCoordinator
 from sollol.discovery import discover_ollama_nodes
 from sollol.rpc_discovery import auto_discover_rpc_backends, check_rpc_server
 from sollol.rpc_auto_setup import auto_setup_rpc_backends, RPCAutoSetup
+from sollol.rpc_registry import RPCBackendRegistry
 
 # Legacy support
 from sollol.sollol import SOLLOL
 from sollol.config import SOLLOLConfig
 
-__version__ = "0.3.2"
+__version__ = "0.3.5"
 __all__ = [
     # Core
     "OllamaPool",
@@ -69,6 +70,7 @@ __all__ = [
     "auto_setup_rpc_backends",
     "check_rpc_server",
     "RPCAutoSetup",
+    "RPCBackendRegistry",
     # Legacy
     "SOLLOL",
     "SOLLOLConfig",

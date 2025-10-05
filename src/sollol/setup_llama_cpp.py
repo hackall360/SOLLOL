@@ -155,7 +155,13 @@ def main():
     parser.add_argument(
         '--all',
         action='store_true',
-        help='Clone, build, and start (full setup)'
+        help='Clone, build, and install systemd service (full setup)'
+    )
+
+    parser.add_argument(
+        '--service',
+        action='store_true',
+        help='Install as systemd service (recommended for production)'
     )
 
     args = parser.parse_args()
@@ -174,7 +180,7 @@ def main():
     if args.all:
         args.clone = True
         args.build = True
-        args.start = True
+        args.service = True
 
     # Clone
     if args.clone:
@@ -197,7 +203,42 @@ def main():
         if not build_llama_cpp(install_dir):
             return 1
 
-    # Start
+        # Copy to ~/.local/bin for easy systemd access
+        import shutil
+        local_bin = Path.home() / ".local/bin"
+        local_bin.mkdir(parents=True, exist_ok=True)
+        rpc_server_src = Path(install_dir) / "build/bin/rpc-server"
+        rpc_server_dst = local_bin / "rpc-server"
+        if rpc_server_src.exists():
+            shutil.copy2(rpc_server_src, rpc_server_dst)
+            rpc_server_dst.chmod(0o755)
+            print(f"✅ Copied rpc-server to {rpc_server_dst}")
+
+    # Install systemd service
+    if args.service:
+        if not check_llama_cpp_exists(install_dir):
+            print(f"❌ llama.cpp not found at {install_dir}")
+            print("   Run with --clone --build first")
+            return 1
+
+        # Import and run systemd installer
+        try:
+            from sollol.install_systemd_service import install_rpc_service
+            if not install_rpc_service():
+                return 1
+        except ImportError:
+            # Fallback if not installed as package
+            print("⚠️  Installing systemd service manually...")
+            script_path = Path(__file__).parent / "install_systemd_service.py"
+            if script_path.exists():
+                result = subprocess.run([sys.executable, str(script_path)])
+                if result.returncode != 0:
+                    return 1
+            else:
+                print("❌ install_systemd_service.py not found")
+                return 1
+
+    # Start (interactive mode)
     if args.start:
         if not check_llama_cpp_exists(install_dir):
             print(f"❌ llama.cpp not found at {install_dir}")
