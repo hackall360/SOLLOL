@@ -182,7 +182,7 @@ class LlamaCppCoordinator:
             logger.error(f"Failed to start llama-server: {e}")
             raise
 
-    async def _wait_for_ready(self, timeout: float = 600.0):  # 10 minutes for large models
+    async def _wait_for_ready(self, timeout: float = 1200.0):  # 20 minutes for large models
         """Wait for llama-server to be ready."""
         start_time = asyncio.get_event_loop().time()
 
