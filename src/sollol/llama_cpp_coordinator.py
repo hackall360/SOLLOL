@@ -70,7 +70,7 @@ class LlamaCppCoordinator:
         host: str = "127.0.0.1",
         port: int = 8080,
         n_gpu_layers: int = 0,  # Use 0 for RPC - distributes across CPU nodes
-        ctx_size: int = 8192,
+        ctx_size: int = 2048,
         rpc_registry: Optional['RPCBackendRegistry'] = None
     ):
         """
