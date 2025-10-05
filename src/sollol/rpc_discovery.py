@@ -54,13 +54,10 @@ def discover_rpc_backends(
     """
     backends = []
 
-    # ALWAYS check localhost first
-    logger.info(f"🔍 Checking localhost for RPC server on port {port}...")
-    if check_rpc_server('127.0.0.1', port, timeout):
-        logger.info(f"   ✅ Found RPC server: 127.0.0.1:{port}")
-        backends.append({"host": "127.0.0.1", "port": port})
+    # Skip localhost for distributed RPC (coordinator runs on same machine)
+    # localhost RPC backend adds no distribution benefit, only overhead
 
-    # Then check network
+    # Check network
     if cidr is None:
         # Auto-detect local network
         cidr = _detect_local_network()
@@ -86,7 +83,7 @@ def discover_rpc_backends(
             ip = futures[future]
             try:
                 if future.result():
-                    # Skip localhost if already added
+                    # Skip localhost - coordinator runs on same machine, no distribution benefit
                     if ip in ['127.0.0.1', 'localhost']:
                         continue
                     logger.info(f"   ✅ Found RPC server: {ip}:{port}")
