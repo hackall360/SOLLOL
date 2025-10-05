@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](https://github.com/BenevolentJoker-JohnL/SOLLOL/blob/main/LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 
-**Production-Ready Intelligent Load Balancing for Ollama Clusters**
+**Hybrid Cluster Orchestrator: Task Routing + Distributed Model Inference**
 
 [Quick Start](getting-started/quick-start.md){ .md-button .md-button--primary }
 [View on GitHub](https://github.com/BenevolentJoker-JohnL/SOLLOL){ .md-button }
@@ -17,14 +17,23 @@
 
 ## What is SOLLOL?
 
-**SOLLOL transforms multiple Ollama nodes into a unified, intelligent AI inference cluster.**
+**SOLLOL is a hybrid cluster orchestrator that unifies task routing and distributed model inference for local LLM deployments.**
 
-Instead of manually managing multiple Ollama instances or using simple round-robin load balancing, SOLLOL analyzes each request's requirements and automatically routes it to the optimal node based on:
+SOLLOL provides two complementary distribution strategies:
 
+### 1. Task Distribution (Load Balancing)
+Intelligently routes multiple agent requests across Ollama nodes based on:
 - **Task complexity** (embedding vs generation vs analysis)
 - **Resource availability** (GPU memory, CPU load)
 - **Real-time performance** (latency, success rate)
 - **Historical patterns** (adaptive learning from past executions)
+
+### 2. Model Sharding (Layer-Level Distribution)
+Enables running models that don't fit on a single machine via llama.cpp RPC:
+- **Layer distribution** across multiple RPC backends
+- **GGUF auto-extraction** from Ollama blob storage
+- **Verified with 13B models** across 2-3 nodes
+- **Trade-offs**: Slower startup (2-5 min) and inference (~5 tok/s vs ~20 tok/s local)
 
 ## Key Features
 
