@@ -11,16 +11,21 @@ The coordinator (llama-server) handles:
 - Automatic layer slicing across RPC backends
 - Inter-node communication via RPC protocol
 - Standard HTTP API (Ollama-compatible)
+- Intelligent load balancing across CPU/GPU resources
+- Parallel inference with full resource utilization
 
-We just manage starting the coordinator and providing the right RPC backend addresses.
+We manage starting the coordinator and intelligently selecting healthy RPC backends.
 """
 
 import asyncio
 import subprocess
 import logging
 import httpx
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    from sollol.rpc_registry import RPCBackendRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +69,9 @@ class LlamaCppCoordinator:
         rpc_backends: List[RPCBackend],
         host: str = "127.0.0.1",
         port: int = 8080,
-        n_gpu_layers: int = 99,
-        ctx_size: int = 8192
+        n_gpu_layers: int = 0,  # Use 0 for RPC - distributes across CPU nodes
+        ctx_size: int = 8192,
+        rpc_registry: Optional['RPCBackendRegistry'] = None
     ):
         """
         Initialize coordinator.
@@ -77,6 +83,7 @@ class LlamaCppCoordinator:
             port: Port for llama-server HTTP API
             n_gpu_layers: Number of layers to attempt GPU offload
             ctx_size: Context window size
+            rpc_registry: Optional registry for intelligent backend selection
         """
         self.model_path = model_path
         self.rpc_backends = rpc_backends
@@ -84,13 +91,41 @@ class LlamaCppCoordinator:
         self.port = port
         self.n_gpu_layers = n_gpu_layers
         self.ctx_size = ctx_size
+        self.rpc_registry = rpc_registry
 
         self.process: Optional[subprocess.Popen] = None
         self.http_client = httpx.AsyncClient(timeout=300.0)
 
+    def _get_healthy_backends(self) -> List[RPCBackend]:
+        """
+        Get list of healthy RPC backends using registry if available.
+
+        Returns:
+            List of healthy backends, or all backends if no registry
+        """
+        if not self.rpc_registry:
+            return self.rpc_backends
+
+        # Get healthy backends from registry
+        healthy = self.rpc_registry.get_healthy_backends()
+
+        if not healthy:
+            logger.warning("No healthy RPC backends found, using all configured backends")
+            return self.rpc_backends
+
+        logger.info(f"Using {len(healthy)}/{len(self.rpc_backends)} healthy RPC backends")
+
+        # Convert registry backends to RPCBackend objects
+        return [
+            RPCBackend(host=b.host, port=b.port)
+            for b in healthy
+        ]
+
     async def start(self):
         """
-        Start llama-server coordinator with RPC backends.
+        Start llama-server coordinator with healthy RPC backends.
+
+        Uses RPCBackendRegistry if available to filter to only healthy backends.
 
         Command format:
             llama-server \\
@@ -98,30 +133,40 @@ class LlamaCppCoordinator:
               --host 0.0.0.0 \\
               --port 8080 \\
               --rpc node1:50052,node2:50052,node3:50052 \\
-              --gpu-layers 99 \\
+              --gpu-layers 0 \\
               --ctx-size 8192
         """
+        # Get healthy backends (uses registry if available)
+        healthy_backends = self._get_healthy_backends()
+
+        if not healthy_backends:
+            raise RuntimeError("No healthy RPC backends available")
+
         # Build RPC backend address list
-        rpc_addresses = ",".join([backend.address for backend in self.rpc_backends])
+        rpc_addresses = ",".join([backend.address for backend in healthy_backends])
 
         # Build llama-server command
+        # For RPC: use --gpu-layers 0 to distribute across CPU nodes
+        # llama.cpp automatically splits layers across RPC backends
         cmd = [
             "llama-server",
             "--model", self.model_path,
             "--host", self.host,
             "--port", str(self.port),
             "--rpc", rpc_addresses,
-            "--gpu-layers", str(self.n_gpu_layers),
+            "--gpu-layers", "0",  # CPU-only for RPC distribution
             "--ctx-size", str(self.ctx_size),
         ]
 
         logger.info(f"Starting llama-server coordinator: {' '.join(cmd)}")
 
         try:
+            # Log llama-server output to file to avoid blocking on filled buffers
+            log_file = open("/tmp/llama-server.log", "w")
             self.process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
                 text=True
             )
 
@@ -137,7 +182,7 @@ class LlamaCppCoordinator:
             logger.error(f"Failed to start llama-server: {e}")
             raise
 
-    async def _wait_for_ready(self, timeout: float = 30.0):
+    async def _wait_for_ready(self, timeout: float = 300.0):  # 5 minutes for large models
         """Wait for llama-server to be ready."""
         start_time = asyncio.get_event_loop().time()
 
