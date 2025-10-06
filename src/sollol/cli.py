@@ -99,5 +99,10 @@ def status():
     logger.info("   Stats: http://localhost:8000/api/stats")
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point for CLI."""
     app()
+
+
+if __name__ == "__main__":
+    main()
