@@ -678,10 +678,11 @@ config = SOLLOLConfig(
 )
 ```
 
-**Performance**:
-- **Throughput**: ~15-20 requests/second
-- **Concurrent users**: ~50-100
-- **High availability**: Automatic failover
+**Capabilities**:
+- Automatic failover between nodes
+- Intelligent routing based on health
+- Suitable for small team deployments
+- **Note**: Actual throughput depends on model size and hardware
 
 ---
 
@@ -709,10 +710,11 @@ Load Balancer (nginx)
 - **Prometheus**: Metrics aggregation across all instances
 - **Grafana**: Unified monitoring dashboard
 
-**Performance**:
-- **Throughput**: ~100+ requests/second
-- **Concurrent users**: ~500-1000+
-- **SLA**: 99.9% uptime with proper failover
+**Capabilities**:
+- Horizontal scaling across multiple gateways
+- Shared state coordination
+- Designed for larger-scale deployments
+- **Note**: Specific performance depends on infrastructure and configuration
 
 ---
 
@@ -736,14 +738,15 @@ Total: 2.5s
 
 ### Throughput Scaling
 
-| Nodes | Requests/sec | Speedup vs 1 node |
-|-------|--------------|-------------------|
-| 1 | 2.1 | 1.0x |
-| 2 | 4.0 | 1.9x (95% efficiency) |
-| 5 | 9.8 | 4.7x (94% efficiency) |
-| 10 | 19.2 | 9.1x (91% efficiency) |
+**Theoretical scaling** (actual results depend on workload and network):
 
-**Efficiency stays high** due to intelligent routing minimizing contention.
+| Nodes | Theoretical Speedup | Notes |
+|-------|---------------------|-------|
+| 2 | ~1.8-1.9x | Near-linear for parallel workloads |
+| 5 | ~4-5x | Network overhead becomes factor |
+| 10 | ~8-9x | Diminishing returns due to coordination |
+
+**Note**: These are estimates for embarrassingly parallel workloads. Sequential dependencies will reduce speedup.
 
 ---
 
@@ -777,11 +780,13 @@ Total: 2.5s
 
 | Metric | No Orchestration | nginx Round-Robin | SOLLOL |
 |--------|------------------|-------------------|---------|
-| **Avg Latency** | Varies widely | 2.8s | 2.1s (-25%) |
-| **P99 Latency** | 8.5s | 5.2s | 3.8s (-27%) |
-| **Failover Time** | Manual (~5min) | Manual (~5min) | Auto (<1s) |
-| **GPU Utilization** | 40% | 65% | 85% |
-| **Setup Time** | N/A | 30min | 5min |
+| **Routing** | Manual selection | Blind distribution | Context-aware |
+| **Failover** | Manual | Manual | Automatic |
+| **Resource Awareness** | None | None | GPU/CPU/memory |
+| **Learning** | No | No | Adapts from metrics |
+| **Setup** | N/A | Complex config | Auto-discovery |
+
+**Note**: Actual performance improvements depend on workload and infrastructure.
 
 ---
 
@@ -830,30 +835,32 @@ sollol_gpu_memory_free_bytes{host="10.0.0.2:11434"} 16384000000
 
 ### Roadmap
 
-1. **ML-Based Routing** (Q2 2025)
+1. **ML-Based Routing**
    - Train ML model on historical routing decisions
    - Predict optimal node based on request features
-   - Target: 40% latency improvement
+   - Goal: Further improve routing accuracy
 
-2. **Cost Optimization** (Q3 2025)
+2. **Cost Optimization**
    - Cloud provider cost tracking
    - Route based on $/request
    - Spot instance integration
 
-3. **Geographic Routing** (Q3 2025)
+3. **Geographic Routing**
    - Multi-region deployments
    - Latency-aware routing across regions
    - Data sovereignty compliance
 
-4. **Auto-Scaling Integration** (Q4 2025)
+4. **Auto-Scaling Integration**
    - Kubernetes HPA integration
    - Auto-provision nodes based on queue depth
    - Scale down during low usage
 
-5. **Advanced Sharding** (Q4 2025)
+5. **Advanced Sharding**
    - Pipeline parallelism (not just tensor parallelism)
    - Multi-model serving on shared shards
    - Dynamic layer redistribution
+
+**Timeline**: These are aspirational features without committed dates.
 
 ---
 

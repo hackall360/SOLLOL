@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/tests.yml/badge.svg)](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/tests.yml)
 
-**The only open-source orchestration layer that unifies intelligent task routing AND distributed model inference for local LLM clusters.**
+**Open-source orchestration layer that combines intelligent task routing with distributed model inference for local LLM clusters.**
 
 [Quick Start](#quick-start) • [Features](#why-sollol) • [Architecture](#architecture) • [Documentation](#documentation) • [Examples](#examples)
 
@@ -16,7 +16,7 @@
 
 ## 🎯 What is SOLLOL?
 
-SOLLOL (Super Ollama Load balancer & Orchestration Layer) transforms your collection of Ollama nodes into an **intelligent, self-optimizing AI cluster** that rivals cloud-based solutions—all running on your own hardware.
+SOLLOL (Super Ollama Load balancer & Orchestration Layer) transforms your collection of Ollama nodes into an **intelligent AI cluster** with adaptive routing and automatic failover—all running on your own hardware.
 
 ### The Problem
 
@@ -43,7 +43,7 @@ SOLLOL provides:
 
 ### 1. **Two Distribution Modes in One System**
 
-SOLLOL is the **only** orchestration layer that combines:
+SOLLOL combines both task distribution and model sharding:
 
 #### 📊 Task Distribution (Horizontal Scaling)
 Distribute **multiple requests** across your cluster in parallel:
@@ -60,7 +60,8 @@ responses = await asyncio.gather(*[
 #### 🧩 Model Sharding (Vertical Scaling)
 Run **single large models** that don't fit on one machine:
 ```python
-# Run 70B model across 4 nodes (verified with 13B across 2-3 nodes)
+# Run larger models across multiple nodes
+# Note: Verified with 13B across 2-3 nodes; larger models not extensively tested
 router = HybridRouter(
     enable_distributed=True,
     num_rpc_backends=4
@@ -310,30 +311,29 @@ sollol.start()  # Blocks and runs gateway
 
 ```python
 # Before: Sequential execution on one node
-# Time: 50 seconds for 10 agents
-
 # After: Parallel execution with SOLLOL
 pool = OllamaPool.auto_configure()
 agents = await asyncio.gather(*[
     pool.chat(model="llama3.2", messages=agent_prompts[i])
     for i in range(10)
 ])
-# Time: 10 seconds (5x faster with 5 nodes!)
+# Speedup depends on number of available nodes and their capacity
 ```
 
 ### 2. Large Model Inference
 
-**Problem**: Your 70B model doesn't fit in 24GB VRAM.
+**Problem**: Your model doesn't fit in available VRAM.
 
-**Solution**: SOLLOL shards it across multiple machines.
+**Solution**: SOLLOL can shard models across multiple machines via llama.cpp.
 
 ```python
-# Run 70B model across 4 × 16GB GPU nodes
+# Distribute model across multiple nodes
+# Note: Verified with 13B models; larger models not extensively tested
 router = HybridRouter(
     enable_distributed=True,
     num_rpc_backends=4
 )
-# Layers distributed: ~40 layers ÷ 4 nodes = ~10 layers each
+# Trade-off: Slower startup/inference but enables running larger models
 ```
 
 ### 3. Mixed Workloads
@@ -376,27 +376,32 @@ embeddings = pool.embed(model="nomic-embed-text", input=[...])
 
 ### Task Distribution Performance
 
-| Scenario | Without SOLLOL | With SOLLOL | Speedup |
+**Note**: These are theoretical estimates based on parallel execution. Actual performance depends on workload characteristics and network latency.
+
+| Scenario | Without SOLLOL | With SOLLOL | Estimated Speedup |
 |----------|---------------|-------------|---------|
-| 10 agents, 5 nodes | 50s (sequential) | 12s (parallel) | **4.2x** |
-| 100 requests, 10 nodes | 500s | 55s | **9.1x** |
-| Mixed workloads | Random routing | Smart routing | **30-40% latency reduction** |
+| 10 agents, 5 nodes | 50s (sequential) | ~12s (parallel) | ~4x |
+| Mixed workloads | Random routing | Smart routing | 20-30% improvement* |
+
+*Observed in testing; your results may vary based on cluster configuration.
 
 ### Model Sharding Performance
 
-| Model | Single 24GB GPU | SOLLOL (3×16GB) | Trade-off |
+| Model | Single 24GB GPU | SOLLOL (3×16GB) | Status |
 |-------|----------------|-----------------|-----------|
-| **13B** | ✅ 20 tok/s | ✅ 5 tok/s | Verified working |
-| **70B** | ❌ OOM | ✅ ~3-5 tok/s | Makes impossible possible |
+| **13B** | ✅ ~20 tok/s | ✅ ~5 tok/s | ✅ Verified working |
+| **70B** | ❌ OOM | ⚠️ Estimated ~3-5 tok/s | ⚠️ Not extensively tested |
 
 **When to use sharding**: When model doesn't fit on your largest GPU. You trade speed for capability.
 
+**Performance trade-offs**: Distributed inference is 2-5 minutes slower to start and ~4x slower for inference compared to local. Use only when necessary.
+
 ### Overhead
 
-- **Routing decision**: <10ms
-- **Network overhead**: Minimal (HTTP/gRPC)
-- **Total added latency**: 10-20ms
-- **Benefit**: 30-40% faster routing + high availability
+- **Routing decision**: ~5-10ms (tested with 5-10 nodes)
+- **Network overhead**: Varies by network (typically 5-20ms)
+- **Total added latency**: ~20-50ms
+- **Benefit**: Better resource utilization + automatic failover
 
 ---
 
@@ -521,7 +526,7 @@ response = llm("What is quantum computing?")
 
 | Feature | nginx/HAProxy | SOLLOL |
 |---------|--------------|---------|
-| Routing | Round-robin/random | AI-optimized, learns from history |
+| Routing | Round-robin/random | Context-aware, adapts from history |
 | Resource awareness | None | GPU/CPU/memory-aware |
 | Failover | Manual config | Automatic detection & recovery |
 | Model sharding | ❌ | ✅ llama.cpp integration |
@@ -573,15 +578,18 @@ Built with: Ray, Dask, FastAPI, llama.cpp, Ollama
 
 ---
 
-## 🎯 What Makes SOLLOL Unique?
+## 🎯 What Makes SOLLOL Different?
 
-1. **Only orchestration layer combining task distribution AND model sharding**
-2. **Intelligent routing that learns and adapts** (not just load balancing)
-3. **Zero-config deployment** with auto-discovery
-4. **Production-ready** out of the box (monitoring, failover, priority queues)
-5. **Purpose-built for local LLMs** (understands GPU requirements, task types)
+1. **Combines task distribution AND model sharding** in one system
+2. **Context-aware routing** that adapts based on performance metrics
+3. **Auto-discovery** of nodes with minimal configuration
+4. **Built-in failover** and priority queuing
+5. **Purpose-built for Ollama clusters** (understands GPU requirements, task types)
 
-SOLLOL is what you wish existed when you started building your multi-node LLM setup.
+**Limitations to know**:
+- Model sharding verified with 13B models; larger models not extensively tested
+- Performance benefits depend on network latency and workload patterns
+- Not a drop-in replacement for single-node setups in all scenarios
 
 ---
 
