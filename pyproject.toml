@@ -38,6 +38,9 @@ dependencies = [
     "flask-cors>=4.0.0",
     "flask-sock>=0.7.0",
     "waitress>=3.0.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "starlette>=0.27.0",
 ]
 
 [project.optional-dependencies]
@@ -52,10 +55,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/BenevolentJoker-JohnL/SynapticLlamas"
-Documentation = "https://github.com/BenevolentJoker-JohnL/SynapticLlamas/blob/main/README.md"
-Repository = "https://github.com/BenevolentJoker-JohnL/SynapticLlamas"
-"Bug Tracker" = "https://github.com/BenevolentJoker-JohnL/SynapticLlamas/issues"
+Homepage = "https://github.com/BenevolentJoker-JohnL/SOLLOL"
+Documentation = "https://github.com/BenevolentJoker-JohnL/SOLLOL/blob/main/README.md"
+Repository = "https://github.com/BenevolentJoker-JohnL/SOLLOL"
+"Bug Tracker" = "https://github.com/BenevolentJoker-JohnL/SOLLOL/issues"
 
 [project.scripts]
 sollol = "sollol.cli:main"
