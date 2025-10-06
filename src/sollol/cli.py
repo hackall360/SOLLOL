@@ -28,9 +28,9 @@ def up(
     dask_scheduler: str = typer.Option(
         None, help="External Dask scheduler address (e.g., tcp://10.0.0.1:8786)"
     ),
-    autobatch: bool = typer.Option(True, help="Enable autonomous batch processing"),
+    autobatch: bool = typer.Option(True, "--autobatch/--no-autobatch", help="Enable autonomous batch processing"),
     autobatch_interval: int = typer.Option(60, help="Seconds between autobatch cycles"),
-    adaptive_metrics: bool = typer.Option(True, help="Enable adaptive metrics feedback loop"),
+    adaptive_metrics: bool = typer.Option(True, "--adaptive-metrics/--no-adaptive-metrics", help="Enable adaptive metrics feedback loop"),
     adaptive_metrics_interval: int = typer.Option(
         30, help="Seconds between adaptive metrics updates"
     ),
