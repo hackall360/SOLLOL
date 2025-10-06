@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from .intelligence import IntelligentRouter, get_router
+from .node_health import NodeHealthMonitor, normalize_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,9 @@ class OllamaPool:
         self.enable_intelligent_routing = enable_intelligent_routing
         self.router = get_router() if enable_intelligent_routing else None
 
+        # Initialize health monitoring (FlockParser pattern)
+        self.health_monitor = NodeHealthMonitor()
+
         # Enhanced stats tracking with performance metrics
         self.stats = {
             "total_requests": 0,
@@ -72,7 +76,8 @@ class OllamaPool:
 
         logger.info(
             f"OllamaPool initialized with {len(self.nodes)} nodes "
-            f"(intelligent_routing={'enabled' if enable_intelligent_routing else 'disabled'})"
+            f"(intelligent_routing={'enabled' if enable_intelligent_routing else 'disabled'}, "
+            f"vram_monitoring=enabled)"
         )
 
     @classmethod
@@ -220,6 +225,17 @@ class OllamaPool:
 
                 # Calculate latency
                 latency_ms = (time.time() - start_time) * 1000
+
+                # Detect VRAM exhaustion (FlockParser pattern)
+                vram_exhausted = self.health_monitor.detect_vram_exhaustion(node_key, latency_ms)
+                if vram_exhausted:
+                    # Mark node as degraded in performance tracking
+                    with self._lock:
+                        if node_key in self.stats["node_performance"]:
+                            self.stats["node_performance"][node_key]["vram_exhausted"] = True
+
+                # Update health baseline
+                self.health_monitor.update_baseline(node_key, latency_ms)
 
                 if response.status_code == 200:
                     # Success! Update metrics
@@ -370,12 +386,14 @@ class OllamaPool:
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive pool statistics with performance metrics."""
         with self._lock:
-            return {
+            stats_data = {
                 **self.stats,
                 "nodes_configured": len(self.nodes),
                 "nodes": [f"{n['host']}:{n['port']}" for n in self.nodes],
                 "intelligent_routing_enabled": self.enable_intelligent_routing,
+                "vram_monitoring": self.health_monitor.get_stats(),  # FlockParser health monitoring
             }
+            return stats_data
 
     def add_node(self, host: str, port: int = 11434):
         """
