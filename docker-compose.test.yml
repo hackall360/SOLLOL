@@ -1,0 +1,14 @@
+version: '3.8'
+
+# Quick test compose file - single Ollama node
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama-models:

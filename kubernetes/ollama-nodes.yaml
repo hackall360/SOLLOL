@@ -1,0 +1,137 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sollol
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ollama-node
+  namespace: sollol
+  labels:
+    app: ollama-node
+spec:
+  serviceName: ollama-node
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ollama-node
+  template:
+    metadata:
+      labels:
+        app: ollama-node
+    spec:
+      containers:
+      - name: ollama
+        image: ollama/ollama:latest
+        ports:
+        - containerPort: 11434
+          name: http
+          protocol: TCP
+        env:
+        - name: OLLAMA_HOST
+          value: "0.0.0.0:11434"
+        - name: OLLAMA_ORIGINS
+          value: "*"
+        volumeMounts:
+        - name: ollama-data
+          mountPath: /root/.ollama
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "16Gi"
+            cpu: "4000m"
+            nvidia.com/gpu: "1"  # Request 1 GPU per pod
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 11434
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 11434
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      nodeSelector:
+        accelerator: nvidia-gpu  # Schedule on GPU nodes
+  volumeClaimTemplates:
+  - metadata:
+      name: ollama-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-node
+  namespace: sollol
+  labels:
+    app: ollama-node
+spec:
+  clusterIP: None  # Headless service for StatefulSet
+  ports:
+  - port: 11434
+    targetPort: 11434
+    protocol: TCP
+    name: http
+  selector:
+    app: ollama-node
+---
+# Individual services for each pod (for testing)
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-node-1
+  namespace: sollol
+spec:
+  type: ClusterIP
+  ports:
+  - port: 11434
+    targetPort: 11434
+    protocol: TCP
+  selector:
+    app: ollama-node
+    statefulset.kubernetes.io/pod-name: ollama-node-0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-node-2
+  namespace: sollol
+spec:
+  type: ClusterIP
+  ports:
+  - port: 11434
+    targetPort: 11434
+    protocol: TCP
+  selector:
+    app: ollama-node
+    statefulset.kubernetes.io/pod-name: ollama-node-1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-node-3
+  namespace: sollol
+spec:
+  type: ClusterIP
+  ports:
+  - port: 11434
+    targetPort: 11434
+    protocol: TCP
+  selector:
+    app: ollama-node
+    statefulset.kubernetes.io/pod-name: ollama-node-2

@@ -5,6 +5,7 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/tests.yml/badge.svg)](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/tests.yml)
+[![codecov](https://codecov.io/gh/BenevolentJoker-JohnL/SOLLOL/branch/main/graph/badge.svg)](https://codecov.io/gh/BenevolentJoker-JohnL/SOLLOL)
 
 **Open-source orchestration layer that combines intelligent task routing with distributed model inference for local LLM clusters.**
 
@@ -558,16 +559,38 @@ embeddings = pool.embed(model="nomic-embed-text", input=[...])
 
 ## 📊 Performance & Benchmarks
 
-### Task Distribution Performance
+### Real Benchmark Data
 
-**Note**: These are theoretical estimates based on parallel execution. Actual performance depends on workload characteristics and network latency.
+**Actual measurements** from running SOLLOL (see [`benchmarks/results/`](benchmarks/results/) for raw data):
+
+**Single Ollama Node Baseline** (llama3.2-3B, 50 requests, concurrency=5):
+- ✅ **Success Rate:** 100%
+- ⚡ **Throughput:** 0.51 req/s
+- 📈 **Average Latency:** 5,659 ms
+- 📈 **P95 Latency:** 11,299 ms
+- 📈 **P99 Latency:** 12,259 ms
+
+**Test Hardware:** Single Ollama instance with 75+ models loaded
+
+**Run Your Own Benchmarks:**
+```bash
+# Quick single-node test
+python benchmarks/simple_ollama_benchmark.py llama3.2 50
+
+# Full load balancer comparison (requires SOLLOL + multiple nodes)
+python benchmarks/run_benchmarks.py --sollol-url http://localhost:8000 --duration 60
+```
+
+### Task Distribution Performance (Projected)
+
+**Note**: Multi-node comparisons require cluster setup. Estimates based on parallel execution patterns:
 
 | Scenario | Without SOLLOL | With SOLLOL | Estimated Speedup |
 |----------|---------------|-------------|---------|
 | 10 agents, 5 nodes | 50s (sequential) | ~12s (parallel) | ~4x |
 | Mixed workloads | Random routing | Smart routing | 20-30% improvement* |
 
-*Observed in testing; your results may vary based on cluster configuration.
+*Performance depends on workload characteristics and network latency. Run benchmarks on your hardware for accurate measurements.
 
 ### Model Sharding Performance
 
