@@ -424,7 +424,61 @@ response = await coordinator.generate(
 - 📖 [Complete llama.cpp Guide](docs/llama_cpp_guide.md) - Setup, optimization, troubleshooting
 - 💻 [Working Examples](examples/llama_cpp_distributed.py) - 5 complete examples including conversation, batch processing, error handling
 
-### 5. SOLLOL Detection
+---
+
+### 5. Batch Processing API
+
+**New in v0.7.0:** RESTful API for asynchronous batch job management.
+
+Submit large-scale batch operations (thousands of embeddings, bulk inference) and track progress via job IDs:
+
+```python
+import requests
+
+# Submit batch embedding job (up to 10,000 documents)
+response = requests.post("http://localhost:11434/api/batch/embed", json={
+    "model": "nomic-embed-text",
+    "documents": ["Document 1", "Document 2", ...],  # Can be thousands
+    "metadata": {"source": "knowledge_base"}  # Optional metadata
+})
+
+job_id = response.json()["job_id"]
+print(f"Job submitted: {job_id}")
+
+# Poll for job status
+import time
+while True:
+    status = requests.get(f"http://localhost:11434/api/batch/jobs/{job_id}").json()
+
+    progress = status["progress"]["percent"]
+    print(f"Progress: {progress}%")
+
+    if status["status"] == "completed":
+        break
+    time.sleep(1)
+
+# Get results
+results = requests.get(f"http://localhost:11434/api/batch/results/{job_id}").json()
+embeddings = results["results"]  # List of embedding vectors
+print(f"Processed {len(embeddings)} documents in {status['duration_seconds']}s")
+```
+
+**Available Batch Endpoints:**
+- `POST /api/batch/embed` - Submit batch embedding job
+- `GET /api/batch/jobs/{job_id}` - Get job status
+- `GET /api/batch/results/{job_id}` - Get job results
+- `GET /api/batch/jobs?limit=100` - List recent jobs
+- `DELETE /api/batch/jobs/{job_id}` - Cancel job
+
+**Use cases:**
+- Embedding large document collections (thousands of documents)
+- Bulk inference for batch predictions
+- Background processing without blocking
+- Long-running operations with progress tracking
+
+---
+
+### 6. SOLLOL Detection
 
 **New in v0.3.6:** Detect if SOLLOL is running vs native Ollama.
 
@@ -461,7 +515,7 @@ else:
 
 ---
 
-### 6. Production Gateway
+### 7. Production Gateway
 
 ```python
 from sollol import SOLLOL, SOLLOLConfig
@@ -740,6 +794,10 @@ response = llm("What is quantum computing?")
 ## 📚 Documentation
 
 - **[Architecture Guide](ARCHITECTURE.md)** - Deep dive into system design
+- **[Batch Processing API](BATCH_API.md)** - Complete guide to batch job management (NEW in v0.7.0)
+  - API endpoints and examples
+  - Job lifecycle and progress tracking
+  - Best practices and error handling
 - **[llama.cpp Distributed Inference Guide](docs/llama_cpp_guide.md)** - Complete guide to model sharding
   - Setup and configuration
   - Performance optimization
@@ -761,42 +819,62 @@ response = llm("What is quantum computing?")
 
 ---
 
-## 🆕 What's New in v0.3.6
+## 🆕 What's New in v0.7.0
 
-### Synchronous API
-No more async/await required! SOLLOL now provides a synchronous API wrapper that works with traditional Python applications and agent frameworks.
+### 📦 Batch Processing API
+Complete RESTful API for asynchronous batch job management. Submit large-scale batch operations (embeddings, bulk inference) and track progress via job IDs.
 
 ```python
-from sollol.sync_wrapper import OllamaPool, HybridRouter
+import requests
 
-pool = OllamaPool.auto_configure()  # No await needed
-response = pool.chat(...)            # Synchronous call
+# Submit batch embedding job (up to 10,000 documents)
+response = requests.post("http://localhost:11434/api/batch/embed", json={
+    "model": "nomic-embed-text",
+    "documents": ["doc1", "doc2", ...],  # Thousands of documents
+})
+job_id = response.json()["job_id"]
+
+# Check status
+status = requests.get(f"http://localhost:11434/api/batch/jobs/{job_id}")
+print(status.json()["progress"]["percent"])  # 100.0
+
+# Get results
+results = requests.get(f"http://localhost:11434/api/batch/results/{job_id}")
+embeddings = results.json()["results"]
 ```
 
-### Priority Helpers
-Semantic priority levels and role-based mapping make priority configuration much easier:
+**Batch API Endpoints:**
+- `POST /api/batch/embed` - Submit batch embedding job
+- `GET /api/batch/jobs/{job_id}` - Get job status with progress tracking
+- `GET /api/batch/results/{job_id}` - Retrieve job results and errors
+- `DELETE /api/batch/jobs/{job_id}` - Cancel running jobs
+- `GET /api/batch/jobs?limit=100` - List recent jobs
 
+**Features:**
+- UUID-based job tracking with 5 states (PENDING, RUNNING, COMPLETED, FAILED, CANCELLED)
+- Automatic TTL-based cleanup (1 hour default)
+- Progress tracking: completed_items, failed_items, percentage
+- Duration calculation and metadata storage
+- Async job execution via Dask distributed processing
+
+### Previous Features (v0.3.6+)
+
+**Synchronous API** - No async/await required:
 ```python
-from sollol.priority_helpers import Priority, get_priority_for_role
+from sollol.sync_wrapper import OllamaPool
+pool = OllamaPool.auto_configure()
+response = pool.chat(...)  # Synchronous call
+```
 
-# Use semantic constants
+**Priority Helpers** - Semantic priority levels:
+```python
+from sollol.priority_helpers import Priority
 priority = Priority.HIGH  # 7
-
-# Or map from agent roles
-priority = get_priority_for_role("researcher")  # 8
 ```
 
-### SOLLOL Detection
-Clients can now detect if SOLLOL is running vs native Ollama via:
+**SOLLOL Detection:**
 - `X-Powered-By: SOLLOL` header on all responses
-- `/api/health` endpoint returns `{"service": "SOLLOL", "version": "0.3.6"}`
-
-### Integration Examples
-Comprehensive examples showing:
-- Synchronous agent integration patterns
-- Priority configuration and mapping
-- Wrapping SOLLOL around existing infrastructure
-- Gradual migration from legacy systems
+- `/api/health` endpoint returns `{"service": "SOLLOL", "version": "0.7.0"}`
 
 ---
 
