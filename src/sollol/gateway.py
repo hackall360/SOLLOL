@@ -23,9 +23,12 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from sollol.adaptive_parallelism import AdaptiveParallelismStrategy
 from sollol.autobatch import autobatch_loop
+from sollol.embedding_cache import EmbeddingCache
 from sollol.hybrid_router import HybridRouter
 from sollol.pool import OllamaPool
+from sollol.vram_monitor import VRAMMonitor
 from sollol.workers import OllamaWorker
 
 logger = logging.getLogger(__name__)
@@ -57,6 +60,9 @@ _ollama_pool: Optional[OllamaPool] = None
 _hybrid_router: Optional[HybridRouter] = None
 _ray_actors: List = []
 _dask_client: Optional[DaskClient] = None
+_vram_monitor: Optional[VRAMMonitor] = None
+_adaptive_parallelism: Optional[AdaptiveParallelismStrategy] = None
+_embedding_cache: Optional[EmbeddingCache] = None
 
 
 def start_api(
@@ -128,7 +134,7 @@ def start_api(
     Note: SOLLOL runs on port 11434 (Ollama's port). Make sure local Ollama
           is either disabled or running on a different port (e.g., 11435).
     """
-    global _ollama_pool, _hybrid_router, _ray_actors, _dask_client
+    global _ollama_pool, _hybrid_router, _ray_actors, _dask_client, _vram_monitor, _adaptive_parallelism, _embedding_cache
 
     # Parse ALL configuration from environment variables (for programmatic/container deployments)
     port = int(os.getenv("SOLLOL_PORT", os.getenv("PORT", port)))
@@ -193,6 +199,21 @@ def start_api(
             else:
                 logger.info("📡 No RPC backends found (model sharding disabled)")
 
+    # Initialize VRAM monitoring (nvidia-smi/rocm-smi)
+    logger.info("🖥️  Initializing VRAM monitoring...")
+    _vram_monitor = VRAMMonitor()
+    if _vram_monitor.gpu_type != "none":
+        logger.info(f"✅ VRAM monitoring enabled ({_vram_monitor.gpu_type.upper()} GPU detected)")
+    else:
+        logger.info("📊 No GPU detected (VRAM monitoring disabled, CPU-only mode)")
+
+    # Initialize embedding cache
+    logger.info("💾 Initializing embedding cache...")
+    use_redis = os.getenv("SOLLOL_USE_REDIS_CACHE", "false").lower() in ("true", "1", "yes")
+    redis_url = os.getenv("SOLLOL_REDIS_URL", "redis://localhost:6379/0")
+    _embedding_cache = EmbeddingCache(use_redis=use_redis, redis_url=redis_url)
+    logger.info(f"✅ Embedding cache initialized (backend: {'redis' if use_redis else 'memory'})")
+
     # Create Ollama pool for task distribution (auto-discovers remote nodes, excludes localhost)
     logger.info("🔍 Initializing Ollama pool (for task distribution / load balancing)...")
     logger.info("   Excluding localhost (SOLLOL running on this port)")
@@ -205,6 +226,11 @@ def start_api(
     else:
         logger.info("📡 No remote Ollama nodes found (task distribution disabled)")
         logger.info("   To enable task distribution: run Ollama on other machines in your network")
+
+    # Initialize adaptive parallelism strategy
+    logger.info("🔀 Initializing adaptive parallelism strategy...")
+    _adaptive_parallelism = AdaptiveParallelismStrategy(_ollama_pool)
+    logger.info("✅ Adaptive parallelism enabled (sequential vs parallel decision logic)")
 
     # Create hybrid router with model sharding support if RPC backends configured
     if rpc_backends:
@@ -298,39 +324,50 @@ async def chat_endpoint(request: Request):
 
             # Otherwise result is from Ollama pool, fall through to Ray execution
 
-        # Use intelligent routing + Ray parallel execution for Ollama nodes
+        # Adaptive parallelism decision: should we use Ray parallel or sequential?
+        batch_size = len(messages) if isinstance(messages, list) else 1
+        should_parallel, parallelism_reasoning = False, {}
+
+        if _adaptive_parallelism:
+            should_parallel, parallelism_reasoning = _adaptive_parallelism.should_parallelize(
+                batch_size=batch_size
+            )
+            logger.info(f"🔀 Adaptive parallelism: {parallelism_reasoning.get('reason', 'unknown')}")
+        else:
+            should_parallel = True  # Default to parallel if no strategy
+
+        # Use intelligent routing + Ray parallel OR sequential execution
         # OllamaPool selects best node using 7-factor scoring
         node, decision = _ollama_pool._select_node(payload=payload, priority=5)
 
         if not node:
             raise HTTPException(status_code=503, detail="No Ollama nodes available")
 
-        # Submit to Ray actor for parallel execution
         node_key = f"{node['host']}:{node['port']}"
 
-        # Round-robin actor selection for load distribution
-        if _ray_actors:
+        # Execute based on adaptive parallelism decision
+        if should_parallel and _ray_actors:
+            # PARALLEL: Submit to Ray actor
             import random
-            actor = random.choice(_ray_actors)  # Random actor selection for load distribution
-        else:
-            actor = None
-
-        if not actor:
-            # Fallback to direct OllamaPool if no Ray actors
-            logger.warning("No Ray actors available, falling back to direct execution")
-            result = _ollama_pool.chat(model=model, messages=messages)
-        else:
-            # Parallel execution via Ray actor
+            actor = random.choice(_ray_actors)
             result_future = actor.chat.remote(payload, node_key)
             result = await result_future
+            execution_mode = "ray-parallel"
+            actor_info = str(actor)
+        else:
+            # SEQUENTIAL: Direct execution on fastest node
+            result = _ollama_pool.chat(model=model, messages=messages)
+            execution_mode = "sequential"
+            actor_info = "none"
 
         # Add routing metadata
         if isinstance(result, dict):
             result["_sollol_routing"] = {
-                "mode": "ray-parallel",
+                "mode": execution_mode,
                 "node": node_key,
-                "actor_id": str(actor) if actor else "none",
-                "intelligent_routing": decision if decision else {"reasoning": "round-robin fallback"}
+                "actor_id": actor_info,
+                "intelligent_routing": decision if decision else {"reasoning": "round-robin fallback"},
+                "adaptive_parallelism": parallelism_reasoning
             }
 
         return result
@@ -438,6 +475,31 @@ async def health_check():
         )
         health_status["model_sharding"]["model_loaded"] = _hybrid_router.coordinator_model
 
+    # Add VRAM monitoring status
+    if _vram_monitor:
+        local_vram = _vram_monitor.get_local_vram_info()
+        health_status["vram_monitoring"] = {
+            "enabled": local_vram is not None,
+            "gpu_type": _vram_monitor.gpu_type,
+            "local_gpu": local_vram if local_vram else {},
+        }
+
+    # Add adaptive parallelism status
+    if _adaptive_parallelism:
+        health_status["adaptive_parallelism"] = {
+            "enabled": True,
+            "description": "Sequential vs parallel decision logic based on cluster state",
+        }
+
+    # Add embedding cache status
+    if _embedding_cache:
+        cache_stats = _embedding_cache.get_stats()
+        health_status["embedding_cache"] = {
+            "enabled": True,
+            "backend": cache_stats.get("backend", "memory"),
+            **cache_stats,
+        }
+
     return health_status
 
 
@@ -460,6 +522,24 @@ def stats_endpoint():
     # Hybrid router stats
     if _hybrid_router:
         stats["hybrid_routing"] = _hybrid_router.get_stats()
+
+    # VRAM monitoring stats
+    if _vram_monitor:
+        stats["vram_monitoring"] = {
+            "gpu_type": _vram_monitor.gpu_type,
+            "local_gpu": _vram_monitor.get_local_vram_info(),
+        }
+
+    # Adaptive parallelism stats
+    if _adaptive_parallelism:
+        stats["adaptive_parallelism"] = {
+            "enabled": True,
+            "performance_history_entries": len(_adaptive_parallelism.performance_history),
+        }
+
+    # Embedding cache stats
+    if _embedding_cache:
+        stats["embedding_cache"] = _embedding_cache.get_stats()
 
     return stats
 
