@@ -305,26 +305,123 @@ for agent in agents:
 
 ---
 
-### 4. Model Sharding (Large Models)
+### 4. Model Sharding with llama.cpp (Large Models)
+
+**Run models larger than your biggest GPU** by distributing layers across multiple machines.
+
+#### When to Use Model Sharding
+
+Use model sharding when:
+- ✅ Model doesn't fit on your largest GPU (e.g., 70B models on 16GB GPUs)
+- ✅ You have multiple machines with network connectivity
+- ✅ You can tolerate slower inference for capability
+
+Don't use sharding when:
+- ❌ Model fits on a single GPU (use task distribution instead)
+- ❌ You need maximum inference speed
+- ❌ Network latency is high (>10ms between machines)
+
+#### Quick Start: Auto-Setup (Easiest)
 
 ```python
-from sollol import HybridRouter, OllamaPool
+from sollol.sync_wrapper import HybridRouter, OllamaPool
 
-# Enable model sharding for large models
+# SOLLOL handles all setup automatically
 router = HybridRouter(
     ollama_pool=OllamaPool.auto_configure(),
-    enable_distributed=True,  # Enable sharding
-    auto_discover_rpc=True,   # Find existing RPC backends
-    auto_setup_rpc=True,      # Or auto-build them
-    num_rpc_backends=3        # Shard across 3 nodes
+    enable_distributed=True,  # Enable model sharding
+    auto_setup_rpc=True,      # Auto-configure RPC backends
+    num_rpc_backends=3        # Distribute across 3 machines
 )
 
 # Use large model that doesn't fit on one machine
-response = await router.route_request(
-    model="codellama:70b",  # Automatically sharded
-    messages=[{"role": "user", "content": "Complex coding task"}]
+response = router.route_request(
+    model="llama3.1:70b",  # Automatically sharded across backends
+    messages=[{"role": "user", "content": "Explain quantum computing"}]
+)
+
+print(response['message']['content'])
+```
+
+**What happens automatically:**
+1. SOLLOL discovers available RPC backends on your network
+2. Extracts the GGUF model from Ollama storage
+3. Starts llama-server coordinator with optimal settings
+4. Distributes model layers across backends
+5. Routes your request to the coordinator
+
+#### Architecture: How It Works
+
+```
+┌────────────────────────────────────────────┐
+│    Llama 3.1 70B Model (40GB total)        │
+│           Distributed Sharding             │
+└────────────────────────────────────────────┘
+                    │
+       ┌────────────┼────────────┐
+       │            │            │
+       ▼            ▼            ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│  Machine 1   │ │  Machine 2   │ │  Machine 3   │
+│ Layers 0-26  │ │ Layers 27-53 │ │ Layers 54-79 │
+│   (~13GB)    │ │   (~13GB)    │ │   (~13GB)    │
+│ RPC Backend  │ │ RPC Backend  │ │ RPC Backend  │
+└──────────────┘ └──────────────┘ └──────────────┘
+       ▲            ▲            ▲
+       └────────────┼────────────┘
+                    │
+         ┌──────────┴──────────┐
+         │ llama-server        │
+         │ Coordinator         │
+         │ (Port 18080)        │
+         └─────────────────────┘
+```
+
+#### Manual Setup (Advanced)
+
+For explicit control over RPC backends:
+
+```python
+from sollol.llama_cpp_coordinator import LlamaCppCoordinator
+from sollol.rpc_registry import RPCBackendRegistry
+
+# 1. Register RPC backends explicitly
+registry = RPCBackendRegistry()
+registry.add_backend("rpc_1", "grpc://10.9.66.45:50052")
+registry.add_backend("rpc_2", "grpc://10.9.66.46:50052")
+registry.add_backend("rpc_3", "grpc://10.9.66.47:50052")
+
+# 2. Create coordinator
+coordinator = LlamaCppCoordinator(
+    coordinator_port=18080,
+    rpc_backends=registry.get_all_backends(),
+    context_size=4096,
+    gpu_layers=-1  # Use all available GPU layers
+)
+
+# 3. Start and use
+await coordinator.start(model_name="llama3.1:70b")
+response = await coordinator.generate(
+    prompt="Explain the theory of relativity",
+    max_tokens=500
 )
 ```
+
+#### Performance Expectations
+
+| Model Size | Single GPU | Sharded (3 nodes) | Trade-off |
+|------------|-----------|-------------------|-----------|
+| **13B** | ✅ 20 tok/s | ✅ 5 tok/s | -75% speed, works on 3×smaller GPUs |
+| **70B** | ❌ OOM | ⚠️ 3-5 tok/s (est.) | Enables model that won't run otherwise |
+
+**Trade-offs:**
+- 🐌 **Startup**: 2-5 minutes (model distribution + loading)
+- 🐌 **Inference**: ~4x slower than local (network overhead)
+- ✅ **Capability**: Run models that won't fit on single GPU
+
+**Learn More:**
+- 📖 [Complete llama.cpp Guide](docs/llama_cpp_guide.md) - Setup, optimization, troubleshooting
+- 💻 [Working Examples](examples/llama_cpp_distributed.py) - 5 complete examples including conversation, batch processing, error handling
 
 ### 5. SOLLOL Detection
 
@@ -601,10 +698,20 @@ response = llm("What is quantum computing?")
 ## 📚 Documentation
 
 - **[Architecture Guide](ARCHITECTURE.md)** - Deep dive into system design
+- **[llama.cpp Distributed Inference Guide](docs/llama_cpp_guide.md)** - Complete guide to model sharding
+  - Setup and configuration
+  - Performance optimization
+  - Troubleshooting common issues
+  - Advanced topics (custom layer distribution, monitoring, etc.)
 - **[Integration Examples](examples/integration/)** - Practical integration patterns
   - [Synchronous Agent Integration](examples/integration/sync_agents.py)
   - [Priority Configuration](examples/integration/priority_mapping.py)
   - [Load Balancer Wrapper](examples/integration/load_balancer_wrapper.py)
+- **[llama.cpp Distributed Examples](examples/llama_cpp_distributed.py)** - Model sharding examples
+  - Auto-setup and manual configuration
+  - Multi-turn conversations with monitoring
+  - Batch processing with multiple models
+  - Error handling and recovery patterns
 - **[Deployment Guide](docs/deployment.md)** - Production deployment patterns
 - **[API Reference](docs/api.md)** - Complete API documentation
 - **[Performance Tuning](docs/performance.md)** - Optimization guide
