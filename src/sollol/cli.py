@@ -3,6 +3,7 @@ SOLLOL CLI - One-command startup for performance-aware Ollama load balancing.
 """
 
 import logging
+from typing import Optional
 
 import typer
 
@@ -25,7 +26,7 @@ def up(
     dask_workers: int = typer.Option(2, help="Number of Dask workers for batch processing"),
     hosts: str = typer.Option("config/hosts.txt", help="Path to OLLOL hosts configuration file"),
     port: int = typer.Option(8000, help="Port for FastAPI gateway"),
-    dask_scheduler: str = typer.Option(
+    dask_scheduler: Optional[str] = typer.Option(
         None, help="External Dask scheduler address (e.g., tcp://10.0.0.1:8786)"
     ),
     autobatch: bool = typer.Option(True, "--autobatch/--no-autobatch", help="Enable autonomous batch processing"),
@@ -34,10 +35,10 @@ def up(
     adaptive_metrics_interval: int = typer.Option(
         30, help="Seconds between adaptive metrics updates"
     ),
-    redis_url: str = typer.Option(
+    distributed: bool = typer.Option(False, "--distributed/--no-distributed", help="Enable distributed coordination across multiple SOLLOL instances"),
+    redis_url: Optional[str] = typer.Option(
         None, help="Redis URL for distributed coordination (e.g., redis://localhost:6379)"
     ),
-    distributed: bool = typer.Option(False, "--distributed/--no-distributed", help="Enable distributed coordination across multiple SOLLOL instances"),
 ):
     """
     Start SOLLOL with Ray + Dask + FastAPI gateway.
