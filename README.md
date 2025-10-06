@@ -212,16 +212,50 @@ pip install -e .
 
 ## ⚡ Quick Start
 
-### 1. Basic Load Balancing (Task Distribution)
+### 1. Synchronous API (No async/await needed!)
+
+**New in v0.3.6:** SOLLOL now provides a synchronous API for easier integration with non-async applications.
 
 ```python
-from sollol import OllamaPool
+from sollol.sync_wrapper import OllamaPool
+from sollol.priority_helpers import Priority
 
 # Auto-discover and connect to all Ollama nodes
 pool = OllamaPool.auto_configure()
 
 # Make requests - SOLLOL routes intelligently
+# No async/await needed!
 response = pool.chat(
+    model="llama3.2",
+    messages=[{"role": "user", "content": "Hello!"}],
+    priority=Priority.HIGH,  # Semantic priority levels
+    timeout=60  # Request timeout in seconds
+)
+
+print(response['message']['content'])
+print(f"Routed to: {response.get('_sollol_routing', {}).get('host', 'unknown')}")
+```
+
+**Key features of synchronous API:**
+- ✅ No async/await syntax required
+- ✅ Works with synchronous agent frameworks
+- ✅ Same intelligent routing and features
+- ✅ Runs async code in background thread automatically
+
+---
+
+### 2. Async API (Original)
+
+For async applications, use the original async API:
+
+```python
+from sollol import OllamaPool
+
+# Auto-discover and connect to all Ollama nodes
+pool = await OllamaPool.auto_configure()
+
+# Make requests - SOLLOL routes intelligently
+response = await pool.chat(
     model="llama3.2",
     messages=[{"role": "user", "content": "Hello!"}]
 )
@@ -231,31 +265,47 @@ print(f"Routed to: {response['_sollol_routing']['host']}")
 print(f"Task type: {response['_sollol_routing']['task_type']}")
 ```
 
-### 2. Multi-Agent Parallel Execution
+---
+
+### 3. Priority-Based Multi-Agent Execution
+
+**New in v0.3.6:** Use semantic priority levels and role-based mapping.
 
 ```python
-import asyncio
-from sollol import OllamaPool
+from sollol.sync_wrapper import OllamaPool
+from sollol.priority_helpers import Priority, get_priority_for_role
 
 pool = OllamaPool.auto_configure()
 
-# Run 10 agents in parallel across your cluster
-async def run_agents():
-    tasks = [
-        pool.chat(
-            model="llama3.2",
-            messages=[{"role": "user", "content": f"Agent {i} task"}],
-            priority=5
-        )
-        for i in range(10)
-    ]
-    return await asyncio.gather(*tasks)
+# Define agents with different priorities
+agents = [
+    {"name": "Researcher", "role": "researcher"},  # Priority 8
+    {"name": "Editor", "role": "editor"},          # Priority 6
+    {"name": "Summarizer", "role": "summarizer"},  # Priority 5
+]
 
-responses = asyncio.run(run_agents())
-# ✅ 10 requests distributed across nodes simultaneously
+for agent in agents:
+    priority = get_priority_for_role(agent["role"])
+
+    response = pool.chat(
+        model="llama3.2",
+        messages=[{"role": "user", "content": f"Task for {agent['name']}"}],
+        priority=priority
+    )
+    # User-facing agents get priority, background tasks wait
 ```
 
-### 3. Model Sharding (Large Models)
+**Priority levels available:**
+- `Priority.CRITICAL` (10) - Mission-critical
+- `Priority.URGENT` (9) - Fast response needed
+- `Priority.HIGH` (7) - Important tasks
+- `Priority.NORMAL` (5) - Default
+- `Priority.LOW` (3) - Background tasks
+- `Priority.BATCH` (1) - Can wait
+
+---
+
+### 4. Model Sharding (Large Models)
 
 ```python
 from sollol import HybridRouter, OllamaPool
@@ -276,7 +326,44 @@ response = await router.route_request(
 )
 ```
 
-### 4. Production Gateway
+### 5. SOLLOL Detection
+
+**New in v0.3.6:** Detect if SOLLOL is running vs native Ollama.
+
+```python
+import requests
+
+def is_sollol(url="http://localhost:11434"):
+    """Check if SOLLOL is running at the given URL."""
+
+    # Method 1: Check X-Powered-By header
+    response = requests.get(url)
+    if response.headers.get("X-Powered-By") == "SOLLOL":
+        return True
+
+    # Method 2: Check health endpoint
+    response = requests.get(f"{url}/api/health")
+    data = response.json()
+    if data.get("service") == "SOLLOL":
+        return True
+
+    return False
+
+# Use it
+if is_sollol("http://localhost:11434"):
+    print("✓ SOLLOL detected - using intelligent routing")
+else:
+    print("Native Ollama detected")
+```
+
+**Why this matters:**
+- Enables graceful fallback in client applications
+- Makes SOLLOL a true drop-in replacement
+- Clients can auto-detect and use SOLLOL features when available
+
+---
+
+### 6. Production Gateway
 
 ```python
 from sollol import SOLLOL, SOLLOLConfig
@@ -514,9 +601,53 @@ response = llm("What is quantum computing?")
 ## 📚 Documentation
 
 - **[Architecture Guide](ARCHITECTURE.md)** - Deep dive into system design
+- **[Integration Examples](examples/integration/)** - Practical integration patterns
+  - [Synchronous Agent Integration](examples/integration/sync_agents.py)
+  - [Priority Configuration](examples/integration/priority_mapping.py)
+  - [Load Balancer Wrapper](examples/integration/load_balancer_wrapper.py)
 - **[Deployment Guide](docs/deployment.md)** - Production deployment patterns
 - **[API Reference](docs/api.md)** - Complete API documentation
 - **[Performance Tuning](docs/performance.md)** - Optimization guide
+- **[SynapticLlamas Learnings](SYNAPTICLLAMAS_LEARNINGS.md)** - Features from production use
+
+---
+
+## 🆕 What's New in v0.3.6
+
+### Synchronous API
+No more async/await required! SOLLOL now provides a synchronous API wrapper that works with traditional Python applications and agent frameworks.
+
+```python
+from sollol.sync_wrapper import OllamaPool, HybridRouter
+
+pool = OllamaPool.auto_configure()  # No await needed
+response = pool.chat(...)            # Synchronous call
+```
+
+### Priority Helpers
+Semantic priority levels and role-based mapping make priority configuration much easier:
+
+```python
+from sollol.priority_helpers import Priority, get_priority_for_role
+
+# Use semantic constants
+priority = Priority.HIGH  # 7
+
+# Or map from agent roles
+priority = get_priority_for_role("researcher")  # 8
+```
+
+### SOLLOL Detection
+Clients can now detect if SOLLOL is running vs native Ollama via:
+- `X-Powered-By: SOLLOL` header on all responses
+- `/api/health` endpoint returns `{"service": "SOLLOL", "version": "0.3.6"}`
+
+### Integration Examples
+Comprehensive examples showing:
+- Synchronous agent integration patterns
+- Priority configuration and mapping
+- Wrapping SOLLOL around existing infrastructure
+- Gradual migration from legacy systems
 
 ---
 

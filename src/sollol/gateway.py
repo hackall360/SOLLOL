@@ -16,17 +16,36 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from sollol.hybrid_router import HybridRouter
 from sollol.pool import OllamaPool
 
 logger = logging.getLogger(__name__)
 
+# Version from pyproject.toml
+__version__ = "0.3.6"
+
+
+class SOLLOLHeadersMiddleware(BaseHTTPMiddleware):
+    """Add SOLLOL identification headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Powered-By"] = "SOLLOL"
+        response.headers["X-SOLLOL-Version"] = __version__
+        return response
+
+
 app = FastAPI(
     title="SOLLOL Gateway",
     description="Two independent distribution modes: task distribution (load balancing) OR model sharding (distributed inference) OR BOTH",
 )
+
+# Add SOLLOL identification headers to all responses
+app.add_middleware(SOLLOLHeadersMiddleware)
 
 # Global instances
 _ollama_pool: Optional[OllamaPool] = None
@@ -243,11 +262,18 @@ async def health_check():
     Check health of gateway and distribution backends.
 
     Returns status for:
+    - Service identification (SOLLOL vs native Ollama)
     - Task Distribution (Ollama pool for load balancing)
     - Model Sharding (llama.cpp RPC backends for large models)
+
+    This endpoint can be used to detect if SOLLOL is running vs native Ollama:
+    - Check for "X-Powered-By: SOLLOL" header
+    - Check response contains "service": "SOLLOL"
     """
     health_status = {
         "status": "healthy",
+        "service": "SOLLOL",
+        "version": __version__,
         "task_distribution": {
             "enabled": _ollama_pool is not None and len(_ollama_pool.nodes) > 0,
             "ollama_nodes": len(_ollama_pool.nodes) if _ollama_pool else 0,
@@ -300,8 +326,9 @@ def stats_endpoint():
 async def root():
     """Root endpoint with quick start guide."""
     return {
+        "service": "SOLLOL",
         "name": "SOLLOL Gateway",
-        "version": "2.0",
+        "version": __version__,
         "distribution_modes": {
             "task_distribution": "Load balance agent requests across Ollama nodes (parallel execution)",
             "model_sharding": "Distribute large models via llama.cpp RPC backends (single model, multiple nodes)",
