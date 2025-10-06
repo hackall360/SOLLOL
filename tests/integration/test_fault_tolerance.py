@@ -7,8 +7,11 @@ Tests SOLLOL's ability to handle:
 - High load scenarios
 - Recovery procedures
 """
-import pytest
+
 import asyncio
+
+import pytest
+
 from sollol.intelligence import IntelligentRouter, TaskContext
 from sollol.prioritization import PriorityQueue
 
@@ -32,7 +35,7 @@ class TestFailover:
                 "cpu_load": 0.0,
                 "gpu_free_mem": 0,
                 "priority": 0,
-                "preferred_task_types": []
+                "preferred_task_types": [],
             },
             {
                 "host": "10.0.0.3:11434",
@@ -42,7 +45,7 @@ class TestFailover:
                 "cpu_load": 0.4,
                 "gpu_free_mem": 16384,
                 "priority": 1,
-                "preferred_task_types": []
+                "preferred_task_types": [],
             },
             {
                 "host": "10.0.0.4:11434",
@@ -52,8 +55,8 @@ class TestFailover:
                 "cpu_load": 0.6,
                 "gpu_free_mem": 8192,
                 "priority": 2,
-                "preferred_task_types": []
-            }
+                "preferred_task_types": [],
+            },
         ]
 
     def test_routes_around_failed_node(self, router, hosts_with_failures):
@@ -66,7 +69,7 @@ class TestFailover:
             priority=5,
             requires_gpu=True,
             estimated_duration_ms=3000.0,
-            metadata={}
+            metadata={},
         )
 
         selected_host, decision = router.select_optimal_node(context, hosts_with_failures)
@@ -86,7 +89,7 @@ class TestFailover:
                 "cpu_load": 0.0,
                 "gpu_free_mem": 0,
                 "priority": 0,
-                "preferred_task_types": []
+                "preferred_task_types": [],
             }
             for i in range(2, 5)
         ]
@@ -99,7 +102,7 @@ class TestFailover:
             priority=5,
             requires_gpu=False,
             estimated_duration_ms=1500.0,
-            metadata={}
+            metadata={},
         )
 
         # Should raise error when no hosts available
@@ -114,21 +117,21 @@ class TestFailover:
                 "available": True,
                 "latency_ms": 2000.0,  # Very high latency
                 "success_rate": 0.60,  # Low success rate
-                "cpu_load": 0.95,      # High load
-                "gpu_free_mem": 512,   # Low memory
+                "cpu_load": 0.95,  # High load
+                "gpu_free_mem": 512,  # Low memory
                 "priority": 10,
-                "preferred_task_types": []
+                "preferred_task_types": [],
             },
             {
                 "host": "10.0.0.3:11434",
                 "available": True,
-                "latency_ms": 120.0,   # Normal latency
+                "latency_ms": 120.0,  # Normal latency
                 "success_rate": 0.98,  # High success
-                "cpu_load": 0.3,       # Low load
-                "gpu_free_mem": 16384, # Plenty memory
+                "cpu_load": 0.3,  # Low load
+                "gpu_free_mem": 16384,  # Plenty memory
                 "priority": 1,
-                "preferred_task_types": []
-            }
+                "preferred_task_types": [],
+            },
         ]
 
         context = TaskContext(
@@ -139,7 +142,7 @@ class TestFailover:
             priority=8,
             requires_gpu=True,
             estimated_duration_ms=3000.0,
-            metadata={}
+            metadata={},
         )
 
         selected_host, decision = router.select_optimal_node(context, hosts)
@@ -180,17 +183,18 @@ class TestLoadHandling:
         assert task1.priority == 10  # Critical first
 
         task2 = await queue.dequeue()
-        assert task2.priority == 8   # High second
+        assert task2.priority == 8  # High second
 
         task3 = await queue.dequeue()
-        assert task3.priority == 5   # Normal third
+        assert task3.priority == 5  # Normal third
 
         task4 = await queue.dequeue()
-        assert task4.priority == 3   # Low last
+        assert task4.priority == 3  # Low last
 
     @pytest.mark.asyncio
     async def test_concurrent_access_no_corruption(self, queue):
         """Test queue handles concurrent access safely."""
+
         async def enqueue_many():
             for i in range(50):
                 await queue.enqueue({"task": i}, priority=5)
@@ -201,11 +205,7 @@ class TestLoadHandling:
                 await queue.dequeue()
 
         # Run concurrent enqueue/dequeue
-        await asyncio.gather(
-            enqueue_many(),
-            dequeue_many(),
-            enqueue_many()
-        )
+        await asyncio.gather(enqueue_many(), dequeue_many(), enqueue_many())
 
         # Queue should be consistent
         size = await queue.size()
@@ -244,7 +244,7 @@ class TestRecovery:
                 "cpu_load": 0.0,
                 "gpu_free_mem": 0,
                 "priority": 0,
-                "preferred_task_types": []
+                "preferred_task_types": [],
             },
             {
                 "host": "10.0.0.3:11434",
@@ -254,8 +254,8 @@ class TestRecovery:
                 "cpu_load": 0.8,  # High load (only node)
                 "gpu_free_mem": 8192,
                 "priority": 1,
-                "preferred_task_types": []
-            }
+                "preferred_task_types": [],
+            },
         ]
 
         context = TaskContext(
@@ -266,7 +266,7 @@ class TestRecovery:
             priority=5,
             requires_gpu=True,
             estimated_duration_ms=3000.0,
-            metadata={}
+            metadata={},
         )
 
         # Before recovery: must use overloaded node
@@ -303,7 +303,7 @@ class TestEdgeCases:
             "cpu_load": 0.1,
             "gpu_free_mem": 16384,
             "priority": 0,
-            "preferred_task_types": []
+            "preferred_task_types": [],
         }
 
         context = TaskContext(
@@ -314,7 +314,7 @@ class TestEdgeCases:
             priority=5,
             requires_gpu=False,
             estimated_duration_ms=1500.0,
-            metadata={}
+            metadata={},
         )
 
         # Should get very low score (success_rate multiplier = 0)
@@ -333,7 +333,7 @@ class TestEdgeCases:
             "cpu_load": 0.1,
             "gpu_free_mem": 16384,
             "priority": 0,
-            "preferred_task_types": []
+            "preferred_task_types": [],
         }
 
         context = TaskContext(
@@ -344,7 +344,7 @@ class TestEdgeCases:
             priority=5,
             requires_gpu=False,
             estimated_duration_ms=1500.0,
-            metadata={}
+            metadata={},
         )
 
         # Should heavily penalize high latency

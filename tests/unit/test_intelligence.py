@@ -1,7 +1,9 @@
 """
 Unit tests for intelligent routing engine.
 """
+
 import pytest
+
 from sollol.intelligence import IntelligentRouter, TaskContext
 
 
@@ -16,10 +18,7 @@ class TestIntelligentRouter:
     @pytest.fixture
     def simple_payload(self):
         """Simple chat payload."""
-        return {
-            "model": "llama3.2",
-            "messages": [{"role": "user", "content": "Hello!"}]
-        }
+        return {"model": "llama3.2", "messages": [{"role": "user", "content": "Hello!"}]}
 
     @pytest.fixture
     def complex_payload(self):
@@ -35,23 +34,22 @@ class TestIntelligentRouter:
                 {"role": "assistant", "content": "Here are the key findings..."},
                 {"role": "user", "content": "Provide recommendations based on this analysis."},
                 {"role": "assistant", "content": "Based on the analysis, I recommend..."},
-            ]
+            ],
         }
 
     @pytest.fixture
     def embedding_payload(self):
         """Embedding request payload."""
-        return {
-            "model": "nomic-embed-text",
-            "prompt": "This is a document to embed"
-        }
+        return {"model": "nomic-embed-text", "prompt": "This is a document to embed"}
 
     @pytest.fixture
     def classification_payload(self):
         """Classification task payload."""
         return {
             "model": "llama3.2",
-            "messages": [{"role": "user", "content": "Classify this sentiment: I love this product!"}]
+            "messages": [
+                {"role": "user", "content": "Classify this sentiment: I love this product!"}
+            ],
         }
 
     @pytest.fixture
@@ -66,7 +64,7 @@ class TestIntelligentRouter:
                 "cpu_load": 0.3,
                 "gpu_free_mem": 16384,
                 "priority": 0,
-                "preferred_task_types": ["generation"]
+                "preferred_task_types": ["generation"],
             },
             {
                 "host": "10.0.0.3:11434",
@@ -76,7 +74,7 @@ class TestIntelligentRouter:
                 "cpu_load": 0.6,
                 "gpu_free_mem": 8192,
                 "priority": 1,
-                "preferred_task_types": []
+                "preferred_task_types": [],
             },
             {
                 "host": "10.0.0.4:11434",
@@ -86,8 +84,8 @@ class TestIntelligentRouter:
                 "cpu_load": 0.1,
                 "gpu_free_mem": 0,
                 "priority": 2,
-                "preferred_task_types": ["embedding"]
-            }
+                "preferred_task_types": ["embedding"],
+            },
         ]
 
     # Task Type Detection Tests
@@ -160,7 +158,7 @@ class TestIntelligentRouter:
             priority=5,
             requires_gpu=True,
             estimated_duration_ms=3000.0,
-            metadata={}
+            metadata={},
         )
         unavailable_host = {
             "host": "10.0.0.5:11434",
@@ -170,7 +168,7 @@ class TestIntelligentRouter:
             "cpu_load": 0.1,
             "gpu_free_mem": 16384,
             "priority": 0,
-            "preferred_task_types": []
+            "preferred_task_types": [],
         }
         score = router._score_host_for_context(unavailable_host, context)
         assert score == 0.0
@@ -185,7 +183,7 @@ class TestIntelligentRouter:
             priority=5,
             requires_gpu=True,
             estimated_duration_ms=3000.0,
-            metadata={}
+            metadata={},
         )
 
         # Host with GPU should score higher than host without
@@ -207,7 +205,7 @@ class TestIntelligentRouter:
             priority=5,
             requires_gpu=False,
             estimated_duration_ms=1500.0,
-            metadata={}
+            metadata={},
         )
 
         high_success_host = {
@@ -218,7 +216,7 @@ class TestIntelligentRouter:
             "cpu_load": 0.5,
             "gpu_free_mem": 0,
             "priority": 0,
-            "preferred_task_types": []
+            "preferred_task_types": [],
         }
 
         low_success_host = {
@@ -229,7 +227,7 @@ class TestIntelligentRouter:
             "cpu_load": 0.5,
             "gpu_free_mem": 0,
             "priority": 0,
-            "preferred_task_types": []
+            "preferred_task_types": [],
         }
 
         high_score = router._score_host_for_context(high_success_host, context)
@@ -249,7 +247,7 @@ class TestIntelligentRouter:
             priority=8,
             requires_gpu=True,
             estimated_duration_ms=3000.0,
-            metadata={}
+            metadata={},
         )
 
         selected_host, decision = router.select_optimal_node(context, sample_hosts)
@@ -269,7 +267,7 @@ class TestIntelligentRouter:
             priority=5,
             requires_gpu=False,
             estimated_duration_ms=1500.0,
-            metadata={}
+            metadata={},
         )
 
         with pytest.raises(ValueError, match="No available hosts"):

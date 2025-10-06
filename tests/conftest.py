@@ -1,9 +1,11 @@
 """
 Pytest configuration and shared fixtures for SOLLOL tests.
 """
-import pytest
+
 import asyncio
 from typing import Dict, List
+
+import pytest
 
 
 @pytest.fixture
@@ -17,21 +19,13 @@ def event_loop():
 @pytest.fixture
 def sample_chat_payload() -> Dict:
     """Sample chat completion payload."""
-    return {
-        "model": "llama3.2",
-        "messages": [
-            {"role": "user", "content": "Hello! How are you?"}
-        ]
-    }
+    return {"model": "llama3.2", "messages": [{"role": "user", "content": "Hello! How are you?"}]}
 
 
 @pytest.fixture
 def sample_embedding_payload() -> Dict:
     """Sample embedding payload."""
-    return {
-        "model": "nomic-embed-text",
-        "prompt": "This is a test document for embedding"
-    }
+    return {"model": "nomic-embed-text", "prompt": "This is a test document for embedding"}
 
 
 @pytest.fixture
@@ -47,7 +41,7 @@ def sample_hosts_metadata() -> List[Dict]:
             "gpu_free_mem": 16384,
             "priority": 0,
             "preferred_task_types": ["generation"],
-            "last_updated": "2025-10-03T12:00:00"
+            "last_updated": "2025-10-03T12:00:00",
         },
         {
             "host": "10.0.0.3:11434",
@@ -58,7 +52,7 @@ def sample_hosts_metadata() -> List[Dict]:
             "gpu_free_mem": 8192,
             "priority": 1,
             "preferred_task_types": [],
-            "last_updated": "2025-10-03T12:00:00"
+            "last_updated": "2025-10-03T12:00:00",
         },
         {
             "host": "10.0.0.4:11434",
@@ -69,8 +63,8 @@ def sample_hosts_metadata() -> List[Dict]:
             "gpu_free_mem": 0,
             "priority": 2,
             "preferred_task_types": ["embedding", "classification"],
-            "last_updated": "2025-10-03T12:00:00"
-        }
+            "last_updated": "2025-10-03T12:00:00",
+        },
     ]
 
 
@@ -82,11 +76,11 @@ def degraded_host_metadata() -> Dict:
         "available": True,
         "latency_ms": 1500.0,  # High latency
         "success_rate": 0.65,  # Low success rate
-        "cpu_load": 0.95,      # High load
-        "gpu_free_mem": 512,   # Low GPU memory
+        "cpu_load": 0.95,  # High load
+        "gpu_free_mem": 512,  # Low GPU memory
         "priority": 10,
         "preferred_task_types": [],
-        "last_updated": "2025-10-03T12:00:00"
+        "last_updated": "2025-10-03T12:00:00",
     }
 
 
@@ -102,5 +96,5 @@ def unavailable_host_metadata() -> Dict:
         "gpu_free_mem": 0,
         "priority": 0,
         "preferred_task_types": [],
-        "last_updated": "2025-10-03T12:00:00"
+        "last_updated": "2025-10-03T12:00:00",
     }

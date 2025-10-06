@@ -1,6 +1,7 @@
 """
 Unit tests for priority queue system.
 """
+
 import asyncio
 
 import pytest
@@ -24,18 +25,10 @@ class TestPrioritizedTask:
     def test_task_ordering_by_priority(self):
         """Test tasks are ordered by priority (higher first)."""
         task_low = PrioritizedTask(
-            priority=3,
-            timestamp=1.0,
-            task_id="low",
-            payload={},
-            future=asyncio.Future()
+            priority=3, timestamp=1.0, task_id="low", payload={}, future=asyncio.Future()
         )
         task_high = PrioritizedTask(
-            priority=8,
-            timestamp=1.0,
-            task_id="high",
-            payload={},
-            future=asyncio.Future()
+            priority=8, timestamp=1.0, task_id="high", payload={}, future=asyncio.Future()
         )
 
         assert task_high < task_low  # Higher priority comes first
@@ -43,18 +36,10 @@ class TestPrioritizedTask:
     def test_task_ordering_by_age(self):
         """Test tasks with same priority ordered by age (older first)."""
         task_old = PrioritizedTask(
-            priority=5,
-            timestamp=1.0,
-            task_id="old",
-            payload={},
-            future=asyncio.Future()
+            priority=5, timestamp=1.0, task_id="old", payload={}, future=asyncio.Future()
         )
         task_new = PrioritizedTask(
-            priority=5,
-            timestamp=2.0,
-            task_id="new",
-            payload={},
-            future=asyncio.Future()
+            priority=5, timestamp=2.0, task_id="new", payload={}, future=asyncio.Future()
         )
 
         assert task_old < task_new  # Older timestamp comes first
@@ -270,6 +255,7 @@ class TestPriorityQueue:
 
     async def test_concurrent_enqueue(self, queue):
         """Test concurrent enqueue operations."""
+
         async def add_task(i):
             await queue.enqueue({"num": i}, priority=5)
 
