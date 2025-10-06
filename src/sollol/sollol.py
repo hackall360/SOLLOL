@@ -23,22 +23,29 @@ class SOLLOL:
         ```python
         from sollol import SOLLOL
 
-        # Zero-config startup (auto-discovers everything)
+        # Zero-config startup (reads from environment if set)
         sollol = SOLLOL()
         sollol.start()  # Runs gateway in background thread
 
         # Your app can now use SOLLOL via the gateway
         # http://localhost:11434/api/chat
 
-        # Or with custom configuration
+        # Or with explicit configuration (overrides env vars)
         sollol = SOLLOL(
             port=8000,
             ray_workers=8,
             dask_workers=4,
-            ollama_nodes=["10.0.0.2:11434", "10.0.0.3:11434"],
-            rpc_backends=["10.0.0.5:50052"]
+            ollama_nodes=[{"host": "10.0.0.2", "port": 11434}],
+            rpc_backends=[{"host": "10.0.0.5", "port": 50052}]
         )
         sollol.start(blocking=False)
+
+        # Environment variable configuration:
+        # export SOLLOL_RAY_WORKERS=16
+        # export SOLLOL_PORT=8000
+        # from sollol import SOLLOL
+        # sollol = SOLLOL()  # Reads env vars
+        # sollol.start()
 
         # Check status
         status = sollol.get_status()
@@ -51,28 +58,38 @@ class SOLLOL:
 
     def __init__(
         self,
-        port: int = 11434,
-        ray_workers: int = 4,
-        dask_workers: int = 2,
-        enable_batch_processing: bool = True,
-        autobatch_interval: int = 60,
+        port: int = None,
+        ray_workers: int = None,
+        dask_workers: int = None,
+        enable_batch_processing: bool = None,
+        autobatch_interval: int = None,
         ollama_nodes: Optional[List[Dict]] = None,
         rpc_backends: Optional[List[Dict]] = None,
     ):
         """
         Initialize SOLLOL with configuration.
 
+        Reads from environment variables if parameters not provided:
+        - SOLLOL_PORT or PORT (default: 11434)
+        - SOLLOL_RAY_WORKERS or RAY_WORKERS (default: 4)
+        - SOLLOL_DASK_WORKERS or DASK_WORKERS (default: 2)
+        - SOLLOL_BATCH_PROCESSING (default: true)
+        - SOLLOL_AUTOBATCH_INTERVAL or AUTOBATCH_INTERVAL (default: 60)
+        - RPC_BACKENDS (comma-separated)
+        - OLLAMA_NODES (comma-separated)
+
         Args:
-            port: Gateway port (default: 11434 - Ollama's port)
-            ray_workers: Number of Ray actors for parallel execution
-            dask_workers: Number of Dask workers for batch processing
-            enable_batch_processing: Enable Dask batch processing
-            autobatch_interval: Seconds between autobatch cycles
+            port: Gateway port (default from env or 11434)
+            ray_workers: Number of Ray actors (default from env or 4)
+            dask_workers: Number of Dask workers (default from env or 2)
+            enable_batch_processing: Enable Dask batch processing (default from env or True)
+            autobatch_interval: Seconds between autobatch cycles (default from env or 60)
             ollama_nodes: List of Ollama node dicts (auto-discovers if None)
-            rpc_backends: List of RPC backend dicts for model sharding (auto-discovers if None)
+            rpc_backends: List of RPC backend dicts (auto-discovers if None)
         """
         # Configure logging
         import logging
+        import os
 
         logging.basicConfig(
             level=logging.INFO,
@@ -80,12 +97,12 @@ class SOLLOL:
         )
         self.logger = logging.getLogger(__name__)
 
-        # Store configuration
-        self.port = port
-        self.ray_workers = ray_workers
-        self.dask_workers = dask_workers
-        self.enable_batch_processing = enable_batch_processing
-        self.autobatch_interval = autobatch_interval
+        # Read from environment variables if not provided
+        self.port = port if port is not None else int(os.getenv("SOLLOL_PORT", os.getenv("PORT", "11434")))
+        self.ray_workers = ray_workers if ray_workers is not None else int(os.getenv("SOLLOL_RAY_WORKERS", os.getenv("RAY_WORKERS", "4")))
+        self.dask_workers = dask_workers if dask_workers is not None else int(os.getenv("SOLLOL_DASK_WORKERS", os.getenv("DASK_WORKERS", "2")))
+        self.enable_batch_processing = enable_batch_processing if enable_batch_processing is not None else os.getenv("SOLLOL_BATCH_PROCESSING", "true").lower() in ("true", "1", "yes")
+        self.autobatch_interval = autobatch_interval if autobatch_interval is not None else int(os.getenv("SOLLOL_AUTOBATCH_INTERVAL", os.getenv("AUTOBATCH_INTERVAL", "60")))
         self.ollama_nodes = ollama_nodes
         self.rpc_backends = rpc_backends
 
@@ -94,12 +111,12 @@ class SOLLOL:
         self._running = False
 
         self.logger.info("SOLLOL initialized with configuration:")
-        self.logger.info(f"  Port: {port}")
-        self.logger.info(f"  Ray workers: {ray_workers}")
-        self.logger.info(f"  Dask workers: {dask_workers}")
-        self.logger.info(f"  Batch processing: {'enabled' if enable_batch_processing else 'disabled'}")
-        self.logger.info(f"  Ollama nodes: {len(ollama_nodes) if ollama_nodes else 'auto-discover'}")
-        self.logger.info(f"  RPC backends: {len(rpc_backends) if rpc_backends else 'auto-discover'}")
+        self.logger.info(f"  Port: {self.port}")
+        self.logger.info(f"  Ray workers: {self.ray_workers}")
+        self.logger.info(f"  Dask workers: {self.dask_workers}")
+        self.logger.info(f"  Batch processing: {'enabled' if self.enable_batch_processing else 'disabled'}")
+        self.logger.info(f"  Ollama nodes: {len(self.ollama_nodes) if self.ollama_nodes else 'auto-discover'}")
+        self.logger.info(f"  RPC backends: {len(self.rpc_backends) if self.rpc_backends else 'auto-discover'}")
 
     def start(self, blocking: bool = False):
         """

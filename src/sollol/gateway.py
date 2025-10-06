@@ -90,11 +90,15 @@ def start_api(
     - Zero-config auto-discovery
 
     ENVIRONMENT CONFIGURATION:
-        PORT - Gateway port (default: 11434, the standard Ollama port)
-        RPC_BACKENDS - Comma-separated RPC servers for model sharding (e.g., "192.168.1.10:50052,192.168.1.11:50052")
-        OLLAMA_NODES - Comma-separated Ollama nodes for task distribution (optional, auto-discovers if not set)
-        RAY_WORKERS - Number of Ray actors for parallel execution (default: 4)
-        DASK_WORKERS - Number of Dask workers for batch processing (default: 2)
+        SOLLOL_PORT or PORT - Gateway port (default: 11434)
+        SOLLOL_RAY_WORKERS or RAY_WORKERS - Ray actors for parallel execution (default: 4)
+        SOLLOL_DASK_WORKERS or DASK_WORKERS - Dask workers for batch processing (default: 2)
+        SOLLOL_BATCH_PROCESSING - Enable batch processing: true/false (default: true)
+        SOLLOL_AUTOBATCH_INTERVAL or AUTOBATCH_INTERVAL - Autobatch cycle seconds (default: 60)
+        RPC_BACKENDS - Comma-separated RPC servers for model sharding (e.g., "10.0.0.1:50052,10.0.0.2:50052")
+        OLLAMA_NODES - Comma-separated Ollama nodes for task distribution (e.g., "10.0.0.3:11434,10.0.0.4:11434")
+
+        Note: SOLLOL_* prefixed vars take precedence over legacy names for clarity
 
     Args:
         port: Port to run gateway on (default: 11434 - Ollama's port)
@@ -109,23 +113,29 @@ def start_api(
         # Zero-config (auto-discovers everything):
         python -m sollol.gateway
 
-        # With manual configuration:
+        # Environment variable configuration:
+        export SOLLOL_PORT=8000
+        export SOLLOL_RAY_WORKERS=8
+        export SOLLOL_DASK_WORKERS=4
+        export SOLLOL_BATCH_PROCESSING=false
         export RPC_BACKENDS="192.168.1.10:50052,192.168.1.11:50052"
+        export OLLAMA_NODES="192.168.1.20:11434,192.168.1.21:11434"
         python -m sollol.gateway
 
-        # Custom Ray/Dask workers:
-        export RAY_WORKERS=8
-        export DASK_WORKERS=4
-        python -m sollol.gateway
+        # Docker/Kubernetes ready:
+        docker run -e SOLLOL_RAY_WORKERS=16 sollol:latest
 
     Note: SOLLOL runs on port 11434 (Ollama's port). Make sure local Ollama
           is either disabled or running on a different port (e.g., 11435).
     """
     global _ollama_pool, _hybrid_router, _ray_actors, _dask_client
 
-    # Parse environment overrides
-    ray_workers = int(os.getenv("RAY_WORKERS", ray_workers))
-    dask_workers = int(os.getenv("DASK_WORKERS", dask_workers))
+    # Parse ALL configuration from environment variables (for programmatic/container deployments)
+    port = int(os.getenv("SOLLOL_PORT", os.getenv("PORT", port)))
+    ray_workers = int(os.getenv("SOLLOL_RAY_WORKERS", os.getenv("RAY_WORKERS", ray_workers)))
+    dask_workers = int(os.getenv("SOLLOL_DASK_WORKERS", os.getenv("DASK_WORKERS", dask_workers)))
+    enable_batch_processing = os.getenv("SOLLOL_BATCH_PROCESSING", str(enable_batch_processing)).lower() in ("true", "1", "yes")
+    autobatch_interval = int(os.getenv("SOLLOL_AUTOBATCH_INTERVAL", os.getenv("AUTOBATCH_INTERVAL", autobatch_interval)))
 
     # Initialize Ray cluster for parallel execution
     logger.info("🚀 Initializing Ray cluster for parallel request execution...")
