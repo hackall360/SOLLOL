@@ -5,12 +5,10 @@ This module provides a programmatic interface for applications to configure
 and control SOLLOL entirely from within Python code, without CLI or external configs.
 """
 
-import asyncio
 import threading
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from sollol.cluster import start_dask, start_ray
 from sollol.config import SOLLOLConfig
 
 
@@ -23,26 +21,24 @@ class SOLLOL:
 
     Example:
         ```python
-        from sollol import SOLLOL, SOLLOLConfig
+        from sollol import SOLLOL
 
-        # Configure SOLLOL for your application
-        config = SOLLOLConfig(
-            ray_workers=4,
-            dask_workers=4,
-            hosts=["10.0.0.2:11434", "10.0.0.3:11434"],
-            autobatch_interval=30,
-            routing_strategy="performance"
-        )
-
-        # Initialize and start
-        sollol = SOLLOL(config)
-        sollol.start()
+        # Zero-config startup (auto-discovers everything)
+        sollol = SOLLOL()
+        sollol.start()  # Runs gateway in background thread
 
         # Your app can now use SOLLOL via the gateway
-        # http://localhost:8000/api/chat
+        # http://localhost:11434/api/chat
 
-        # Update configuration dynamically
-        sollol.update_config(ray_workers=6)
+        # Or with custom configuration
+        sollol = SOLLOL(
+            port=8000,
+            ray_workers=8,
+            dask_workers=4,
+            ollama_nodes=["10.0.0.2:11434", "10.0.0.3:11434"],
+            rpc_backends=["10.0.0.5:50052"]
+        )
+        sollol.start(blocking=False)
 
         # Check status
         status = sollol.get_status()
@@ -53,79 +49,61 @@ class SOLLOL:
         ```
     """
 
-    def __init__(self, config: Optional[SOLLOLConfig] = None):
+    def __init__(
+        self,
+        port: int = 11434,
+        ray_workers: int = 4,
+        dask_workers: int = 2,
+        enable_batch_processing: bool = True,
+        autobatch_interval: int = 60,
+        ollama_nodes: Optional[List[Dict]] = None,
+        rpc_backends: Optional[List[Dict]] = None,
+    ):
         """
         Initialize SOLLOL with configuration.
 
         Args:
-            config: SOLLOLConfig instance. If None, uses default configuration.
+            port: Gateway port (default: 11434 - Ollama's port)
+            ray_workers: Number of Ray actors for parallel execution
+            dask_workers: Number of Dask workers for batch processing
+            enable_batch_processing: Enable Dask batch processing
+            autobatch_interval: Seconds between autobatch cycles
+            ollama_nodes: List of Ollama node dicts (auto-discovers if None)
+            rpc_backends: List of RPC backend dicts for model sharding (auto-discovers if None)
         """
-        self.config = config or SOLLOLConfig()
-        self.config.validate()
-
         # Configure logging
         import logging
 
         logging.basicConfig(
-            level=self.config.log_level,
+            level=logging.INFO,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         )
         self.logger = logging.getLogger(__name__)
 
+        # Store configuration
+        self.port = port
+        self.ray_workers = ray_workers
+        self.dask_workers = dask_workers
+        self.enable_batch_processing = enable_batch_processing
+        self.autobatch_interval = autobatch_interval
+        self.ollama_nodes = ollama_nodes
+        self.rpc_backends = rpc_backends
+
         # Internal state
-        self._ray_actors = []
-        self._dask_client = None
         self._gateway_thread: Optional[threading.Thread] = None
         self._running = False
-        self._initialized = False
 
-        self.logger.info("Initialized with configuration:")
-        self.logger.info(f"  Ray workers: {self.config.ray_workers}")
-        self.logger.info(f"  Dask workers: {self.config.dask_workers}")
-        self.logger.info(f"  Hosts: {', '.join(self.config.hosts)}")
-        self.logger.info(f"  Routing: {self.config.routing_strategy}")
-        self.logger.info(f"  Gateway: {self.config.gateway_host}:{self.config.gateway_port}")
-
-    def _initialize_clusters(self):
-        """Initialize Ray and Dask clusters."""
-        if self._initialized:
-            self.logger.debug("Already initialized, skipping...")
-            return
-
-        self.logger.info("Initializing clusters...")
-
-        # Create temporary hosts file from config
-        import os
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
-            for host in self.config.hosts:
-                f.write(f"{host}\n")
-            hosts_file = f.name
-
-        try:
-            # Initialize Ray cluster
-            self._ray_actors = start_ray(workers=self.config.ray_workers, hosts_file=hosts_file)
-
-            if not self._ray_actors:
-                raise RuntimeError("Failed to initialize Ray workers")
-
-            # Initialize Dask cluster
-            self._dask_client = start_dask(
-                workers=self.config.dask_workers, scheduler_address=self.config.dask_scheduler
-            )
-
-            self._initialized = True
-            self.logger.info("Clusters initialized successfully")
-
-        finally:
-            # Clean up temporary hosts file
-            if os.path.exists(hosts_file):
-                os.unlink(hosts_file)
+        self.logger.info("SOLLOL initialized with configuration:")
+        self.logger.info(f"  Port: {port}")
+        self.logger.info(f"  Ray workers: {ray_workers}")
+        self.logger.info(f"  Dask workers: {dask_workers}")
+        self.logger.info(f"  Batch processing: {'enabled' if enable_batch_processing else 'disabled'}")
+        self.logger.info(f"  Ollama nodes: {len(ollama_nodes) if ollama_nodes else 'auto-discover'}")
+        self.logger.info(f"  RPC backends: {len(rpc_backends) if rpc_backends else 'auto-discover'}")
 
     def start(self, blocking: bool = False):
         """
-        Start SOLLOL orchestration.
+        Start SOLLOL gateway.
 
         Args:
             blocking: If True, blocks until stopped. If False, runs in background thread.
@@ -141,13 +119,10 @@ class SOLLOL:
             ```
         """
         if self._running:
-            self.logger.debug("Already running")
+            self.logger.warning("SOLLOL is already running")
             return
 
-        # Initialize clusters if not already done
-        self._initialize_clusters()
-
-        self.logger.info("Starting gateway...")
+        self.logger.info("Starting SOLLOL gateway...")
 
         if blocking:
             # Run gateway in current thread (blocks)
@@ -157,11 +132,10 @@ class SOLLOL:
             self._gateway_thread = threading.Thread(target=self._start_gateway, daemon=True)
             self._gateway_thread.start()
             self._running = True
-            self.logger.info(f"Gateway started in background")
-            self.logger.info(f"API available at http://localhost:{self.config.gateway_port}")
-            self.logger.info(
-                f"Metrics available at http://localhost:{self.config.metrics_port}/metrics"
-            )
+            self.logger.info(f"✅ Gateway started in background thread")
+            self.logger.info(f"   API available at http://localhost:{self.port}")
+            self.logger.info(f"   Health check: http://localhost:{self.port}/api/health")
+            self.logger.info(f"   API docs: http://localhost:{self.port}/docs")
 
     def _start_gateway(self):
         """Internal method to start the FastAPI gateway."""
@@ -170,81 +144,31 @@ class SOLLOL:
         self._running = True
 
         start_api(
-            ray_actors=self._ray_actors,
-            dask_client=self._dask_client,
-            port=self.config.gateway_port,
-            enable_autobatch=self.config.autobatch_enabled,
-            autobatch_interval=self.config.autobatch_interval,
-            enable_adaptive_metrics=self.config.adaptive_metrics_enabled,
-            adaptive_metrics_interval=self.config.adaptive_metrics_interval,
+            port=self.port,
+            rpc_backends=self.rpc_backends,
+            ollama_nodes=self.ollama_nodes,
+            ray_workers=self.ray_workers,
+            dask_workers=self.dask_workers,
+            enable_batch_processing=self.enable_batch_processing,
+            autobatch_interval=self.autobatch_interval,
         )
 
     def stop(self):
         """
-        Stop SOLLOL orchestration.
+        Stop SOLLOL gateway.
 
-        Note: For MVP, Ray and Dask processes need to be killed manually:
-            - Ray: pkill -f "ray::"
-            - Dask: pkill -f "dask"
+        Note: Gateway runs in a daemon thread and will stop when your application exits.
+        Ray and Dask processes are initialized inside the gateway and will also stop.
         """
-        self.logger.info("Stopping orchestration...")
+        self.logger.info("Stopping SOLLOL...")
         self._running = False
 
         if self._gateway_thread and self._gateway_thread.is_alive():
-            self.logger.warning("Gateway thread is running in background")
-            self.logger.warning("Note: Gateway cannot be stopped gracefully in background mode")
-            self.logger.warning("To stop completely, restart your application or kill processes:")
-            self.logger.warning("  pkill -f 'ray::'")
-            self.logger.warning("  pkill -f 'dask'")
+            self.logger.warning("⚠️  Gateway is running in a daemon thread")
+            self.logger.warning("    It will stop when your application exits")
+            self.logger.warning("    To force stop, restart your application")
 
         self.logger.info("Stopped")
-
-    def update_config(self, **kwargs):
-        """
-        Update configuration dynamically.
-
-        Args:
-            **kwargs: Configuration parameters to update (see SOLLOLConfig for available options)
-
-        Example:
-            ```python
-            sollol.update_config(
-                ray_workers=6,
-                autobatch_interval=45,
-                routing_strategy="priority"
-            )
-            ```
-
-        Note: Some configuration changes (like ray_workers, dask_workers) require
-        restarting SOLLOL to take effect.
-        """
-        self.logger.info("Updating configuration...")
-
-        # Update config object
-        for key, value in kwargs.items():
-            if hasattr(self.config, key):
-                old_value = getattr(self.config, key)
-                setattr(self.config, key, value)
-                self.logger.info(f"  {key}: {old_value} -> {value}")
-            else:
-                raise KeyError(f"Invalid configuration key: {key}")
-
-        # Validate new configuration
-        self.config.validate()
-
-        # Warn about changes that require restart
-        restart_required_keys = {
-            "ray_workers",
-            "dask_workers",
-            "dask_scheduler",
-            "hosts",
-            "gateway_port",
-            "metrics_port",
-        }
-        if any(key in restart_required_keys for key in kwargs.keys()):
-            self.logger.warning("\nSome changes require restarting SOLLOL to take effect:")
-            self.logger.warning("  sollol.stop()")
-            self.logger.warning("  sollol.start()")
 
     def get_status(self) -> Dict[str, Any]:
         """
@@ -257,24 +181,23 @@ class SOLLOL:
             ```python
             status = sollol.get_status()
             print(f"Running: {status['running']}")
-            print(f"Ray workers: {status['ray_workers']}")
-            print(f"Hosts: {status['hosts']}")
+            print(f"Port: {status['port']}")
             ```
         """
         return {
             "running": self._running,
-            "initialized": self._initialized,
-            "config": self.config.to_dict(),
-            "ray_workers": len(self._ray_actors),
-            "ray_actors_initialized": len(self._ray_actors) > 0,
-            "dask_initialized": self._dask_client is not None,
+            "port": self.port,
+            "ray_workers": self.ray_workers,
+            "dask_workers": self.dask_workers,
+            "batch_processing_enabled": self.enable_batch_processing,
+            "ollama_nodes": len(self.ollama_nodes) if self.ollama_nodes else "auto-discover",
+            "rpc_backends": len(self.rpc_backends) if self.rpc_backends else "auto-discover",
             "timestamp": datetime.now().isoformat(),
             "endpoints": {
-                "gateway": f"http://localhost:{self.config.gateway_port}",
-                "api_docs": f"http://localhost:{self.config.gateway_port}/docs",
-                "health": f"http://localhost:{self.config.gateway_port}/api/health",
-                "stats": f"http://localhost:{self.config.gateway_port}/api/stats",
-                "metrics": f"http://localhost:{self.config.metrics_port}/metrics",
+                "gateway": f"http://localhost:{self.port}",
+                "api_docs": f"http://localhost:{self.port}/docs",
+                "health": f"http://localhost:{self.port}/api/health",
+                "stats": f"http://localhost:{self.port}/api/stats",
             },
         }
 
@@ -293,7 +216,7 @@ class SOLLOL:
         import httpx
 
         try:
-            resp = httpx.get(f"http://localhost:{self.config.gateway_port}/api/health", timeout=5.0)
+            resp = httpx.get(f"http://localhost:{self.port}/api/health", timeout=5.0)
             return resp.json()
         except Exception as e:
             return {"error": str(e)}
@@ -313,7 +236,7 @@ class SOLLOL:
         import httpx
 
         try:
-            resp = httpx.get(f"http://localhost:{self.config.gateway_port}/api/stats", timeout=5.0)
+            resp = httpx.get(f"http://localhost:{self.port}/api/stats", timeout=5.0)
             return resp.json()
         except Exception as e:
             return {"error": str(e)}
@@ -322,7 +245,7 @@ class SOLLOL:
         """String representation of SOLLOL instance."""
         return (
             f"SOLLOL(running={self._running}, "
-            f"ray_workers={len(self._ray_actors)}, "
-            f"hosts={len(self.config.hosts)}, "
-            f"routing={self.config.routing_strategy})"
+            f"port={self.port}, "
+            f"ray_workers={self.ray_workers}, "
+            f"dask_workers={self.dask_workers})"
         )
