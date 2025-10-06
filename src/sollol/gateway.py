@@ -25,16 +25,20 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from sollol.adaptive_parallelism import AdaptiveParallelismStrategy
 from sollol.autobatch import autobatch_loop
+from sollol.circuit_breaker import CircuitBreaker
 from sollol.embedding_cache import EmbeddingCache
+from sollol.graceful_shutdown import GracefulShutdown, GracefulShutdownMiddleware
 from sollol.hybrid_router import HybridRouter
 from sollol.pool import OllamaPool
+from sollol.rate_limiter import RateLimiter, RateLimitExceeded
+from sollol.retry_logic import RetryConfig, RetryableRequest
 from sollol.vram_monitor import VRAMMonitor
 from sollol.workers import OllamaWorker
 
 logger = logging.getLogger(__name__)
 
 # Version from pyproject.toml
-__version__ = "0.3.6"
+__version__ = "0.5.0"
 
 
 class SOLLOLHeadersMiddleware(BaseHTTPMiddleware):
@@ -63,6 +67,10 @@ _dask_client: Optional[DaskClient] = None
 _vram_monitor: Optional[VRAMMonitor] = None
 _adaptive_parallelism: Optional[AdaptiveParallelismStrategy] = None
 _embedding_cache: Optional[EmbeddingCache] = None
+_rate_limiter: Optional[RateLimiter] = None
+_graceful_shutdown: Optional[GracefulShutdown] = None
+_circuit_breakers: Dict[str, CircuitBreaker] = {}
+_retry_config: Optional[RetryConfig] = None
 
 
 def start_api(
@@ -134,7 +142,7 @@ def start_api(
     Note: SOLLOL runs on port 11434 (Ollama's port). Make sure local Ollama
           is either disabled or running on a different port (e.g., 11435).
     """
-    global _ollama_pool, _hybrid_router, _ray_actors, _dask_client, _vram_monitor, _adaptive_parallelism, _embedding_cache
+    global _ollama_pool, _hybrid_router, _ray_actors, _dask_client, _vram_monitor, _adaptive_parallelism, _embedding_cache, _rate_limiter, _graceful_shutdown, _circuit_breakers, _retry_config
 
     # Parse ALL configuration from environment variables (for programmatic/container deployments)
     port = int(os.getenv("SOLLOL_PORT", os.getenv("PORT", port)))
@@ -232,6 +240,34 @@ def start_api(
     _adaptive_parallelism = AdaptiveParallelismStrategy(_ollama_pool)
     logger.info("✅ Adaptive parallelism enabled (sequential vs parallel decision logic)")
 
+    # Initialize resilience features
+    logger.info("🛡️  Initializing resilience features...")
+
+    # Rate limiter
+    global_rate = float(os.getenv("SOLLOL_GLOBAL_RATE_LIMIT", "100"))  # 100 req/sec
+    per_node_rate = float(os.getenv("SOLLOL_PER_NODE_RATE_LIMIT", "50"))  # 50 req/sec per node
+    _rate_limiter = RateLimiter(
+        global_rate=global_rate,
+        global_capacity=int(global_rate * 2),  # Burst capacity
+        per_node_rate=per_node_rate,
+        per_node_capacity=int(per_node_rate * 2),
+    )
+    logger.info(f"✅ Rate limiter enabled (global: {global_rate}/s, per-node: {per_node_rate}/s)")
+
+    # Retry configuration
+    max_retries = int(os.getenv("SOLLOL_MAX_RETRIES", "3"))
+    _retry_config = RetryConfig(max_retries=max_retries, base_delay=1.0, max_delay=30.0)
+    logger.info(f"✅ Retry logic enabled (max retries: {max_retries}, exponential backoff)")
+
+    # Circuit breakers (will be created per-node on first request)
+    logger.info("✅ Circuit breakers enabled (failure threshold: 5, timeout: 60s)")
+
+    # Graceful shutdown
+    shutdown_timeout = int(os.getenv("SOLLOL_SHUTDOWN_TIMEOUT", "30"))
+    _graceful_shutdown = GracefulShutdown(timeout=shutdown_timeout)
+    _graceful_shutdown.setup_signal_handlers()
+    logger.info(f"✅ Graceful shutdown enabled (timeout: {shutdown_timeout}s)")
+
     # Create hybrid router with model sharding support if RPC backends configured
     if rpc_backends:
         logger.info(f"🚀 Enabling MODEL SHARDING with {len(rpc_backends)} RPC backends")
@@ -261,7 +297,7 @@ def start_api(
 @app.post("/api/chat")
 async def chat_endpoint(request: Request):
     """
-    Chat completion with THREE distribution modes.
+    Chat completion with THREE distribution modes + production resilience.
 
     THREE ROUTING MODES:
     1. Intelligent Task Distribution - 7-factor routing + Ray parallel execution (Ollama nodes)
@@ -274,6 +310,7 @@ async def chat_endpoint(request: Request):
     - Automatic GGUF extraction from Ollama storage (for model sharding)
     - Zero configuration needed
     - Transparent routing metadata in response
+    - Production resilience: rate limiting, circuit breaker, retry logic, graceful shutdown
 
     Request body:
         {
@@ -297,17 +334,34 @@ async def chat_endpoint(request: Request):
             }
         }
     """
-    if not _ollama_pool:
-        raise HTTPException(status_code=503, detail="Gateway not initialized")
-
-    payload = await request.json()
-    model = payload.get("model", "llama3.2")
-    messages = payload.get("messages", [])
-
-    if not messages:
-        raise HTTPException(status_code=400, detail="No messages provided")
+    # Track request for graceful shutdown
+    if _graceful_shutdown:
+        try:
+            _graceful_shutdown.increment_requests()
+        except Exception as e:
+            # Server is shutting down
+            raise HTTPException(status_code=503, detail=str(e))
 
     try:
+        # Rate limiting check
+        if _rate_limiter:
+            allowed, reason = _rate_limiter.allow_request(node=None)
+            if not allowed:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Rate limit exceeded: {reason}",
+                    headers={"Retry-After": "1"}
+                )
+
+        if not _ollama_pool:
+            raise HTTPException(status_code=503, detail="Gateway not initialized")
+
+        payload = await request.json()
+        model = payload.get("model", "llama3.2")
+        messages = payload.get("messages", [])
+
+        if not messages:
+            raise HTTPException(status_code=400, detail="No messages provided")
         # Check if this should use llama.cpp model sharding (large models)
         if _hybrid_router:
             # HybridRouter decides: Ollama pool OR llama.cpp based on model size
@@ -345,20 +399,38 @@ async def chat_endpoint(request: Request):
 
         node_key = f"{node['host']}:{node['port']}"
 
-        # Execute based on adaptive parallelism decision
-        if should_parallel and _ray_actors:
-            # PARALLEL: Submit to Ray actor
-            import random
-            actor = random.choice(_ray_actors)
-            result_future = actor.chat.remote(payload, node_key)
-            result = await result_future
-            execution_mode = "ray-parallel"
-            actor_info = str(actor)
+        # Get or create circuit breaker for this node
+        if node_key not in _circuit_breakers:
+            _circuit_breakers[node_key] = CircuitBreaker(
+                failure_threshold=5,
+                success_threshold=2,
+                timeout_seconds=60,
+                half_open_max_requests=3
+            )
+        breaker = _circuit_breakers[node_key]
+
+        # Define execution function for circuit breaker + retry wrapping
+        async def execute_request():
+            if should_parallel and _ray_actors:
+                # PARALLEL: Submit to Ray actor
+                import random
+                actor = random.choice(_ray_actors)
+                result_future = actor.chat.remote(payload, node_key)
+                return await result_future, "ray-parallel", str(actor)
+            else:
+                # SEQUENTIAL: Direct execution on fastest node
+                result = _ollama_pool.chat(model=model, messages=messages)
+                return result, "sequential", "none"
+
+        # Execute with circuit breaker + retry logic
+        if _retry_config:
+            retrier = RetryableRequest(_retry_config)
+            result, execution_mode, actor_info = await retrier.execute_async(
+                lambda: breaker.call_async(execute_request),
+                exceptions=(Exception,)
+            )
         else:
-            # SEQUENTIAL: Direct execution on fastest node
-            result = _ollama_pool.chat(model=model, messages=messages)
-            execution_mode = "sequential"
-            actor_info = "none"
+            result, execution_mode, actor_info = await breaker.call_async(execute_request)
 
         # Add routing metadata
         if isinstance(result, dict):
@@ -380,12 +452,16 @@ async def chat_endpoint(request: Request):
     except Exception as e:
         logger.error(f"Chat endpoint error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Decrement request counter for graceful shutdown
+        if _graceful_shutdown:
+            _graceful_shutdown.decrement_requests()
 
 
 @app.post("/api/generate")
 async def generate_endpoint(request: Request):
     """
-    Text generation endpoint (non-chat).
+    Text generation endpoint (non-chat) with production resilience.
 
     Request body:
         {
@@ -393,22 +469,73 @@ async def generate_endpoint(request: Request):
             "prompt": "Once upon a time"
         }
     """
-    if not _ollama_pool:
-        raise HTTPException(status_code=503, detail="Gateway not initialized")
-
-    payload = await request.json()
-    model = payload.get("model", "llama3.2")
-    prompt = payload.get("prompt", "")
-
-    if not prompt:
-        raise HTTPException(status_code=400, detail="No prompt provided")
+    # Track request for graceful shutdown
+    if _graceful_shutdown:
+        try:
+            _graceful_shutdown.increment_requests()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=str(e))
 
     try:
-        result = _ollama_pool.generate(model=model, prompt=prompt)
+        # Rate limiting check
+        if _rate_limiter:
+            allowed, reason = _rate_limiter.allow_request(node=None)
+            if not allowed:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Rate limit exceeded: {reason}",
+                    headers={"Retry-After": "1"}
+                )
+
+        if not _ollama_pool:
+            raise HTTPException(status_code=503, detail="Gateway not initialized")
+
+        payload = await request.json()
+        model = payload.get("model", "llama3.2")
+        prompt = payload.get("prompt", "")
+
+        if not prompt:
+            raise HTTPException(status_code=400, detail="No prompt provided")
+
+        # Select best node
+        node, decision = _ollama_pool._select_node(payload=payload, priority=5)
+        if not node:
+            raise HTTPException(status_code=503, detail="No Ollama nodes available")
+
+        node_key = f"{node['host']}:{node['port']}"
+
+        # Get or create circuit breaker for this node
+        if node_key not in _circuit_breakers:
+            _circuit_breakers[node_key] = CircuitBreaker(
+                failure_threshold=5,
+                success_threshold=2,
+                timeout_seconds=60,
+                half_open_max_requests=3
+            )
+        breaker = _circuit_breakers[node_key]
+
+        # Define execution function
+        async def execute_request():
+            return _ollama_pool.generate(model=model, prompt=prompt)
+
+        # Execute with circuit breaker + retry logic
+        if _retry_config:
+            retrier = RetryableRequest(_retry_config)
+            result = await retrier.execute_async(
+                lambda: breaker.call_async(execute_request),
+                exceptions=(Exception,)
+            )
+        else:
+            result = await breaker.call_async(execute_request)
+
         return result
     except Exception as e:
         logger.error(f"Generate endpoint error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Decrement request counter for graceful shutdown
+        if _graceful_shutdown:
+            _graceful_shutdown.decrement_requests()
 
 
 @app.get("/api/health")
@@ -500,6 +627,33 @@ async def health_check():
             **cache_stats,
         }
 
+    # Add resilience features status
+    health_status["resilience"] = {
+        "rate_limiting": {
+            "enabled": _rate_limiter is not None,
+            "global_rate": _rate_limiter.global_limiter.rate if _rate_limiter and _rate_limiter.global_limiter else None,
+            "per_node_rate": _rate_limiter.per_node_rate if _rate_limiter else None,
+        },
+        "circuit_breaker": {
+            "enabled": True,
+            "nodes_tracked": len(_circuit_breakers),
+            "failure_threshold": 5,
+            "timeout_seconds": 60,
+        },
+        "retry_logic": {
+            "enabled": _retry_config is not None,
+            "max_retries": _retry_config.max_retries if _retry_config else None,
+            "base_delay": _retry_config.base_delay if _retry_config else None,
+            "exponential_backoff": True,
+        },
+        "graceful_shutdown": {
+            "enabled": _graceful_shutdown is not None,
+            "is_shutting_down": _graceful_shutdown.is_shutting_down if _graceful_shutdown else False,
+            "active_requests": _graceful_shutdown.active_requests if _graceful_shutdown else 0,
+            "timeout_seconds": _graceful_shutdown.timeout if _graceful_shutdown else None,
+        },
+    }
+
     return health_status
 
 
@@ -540,6 +694,22 @@ def stats_endpoint():
     # Embedding cache stats
     if _embedding_cache:
         stats["embedding_cache"] = _embedding_cache.get_stats()
+
+    # Resilience features stats
+    if _rate_limiter:
+        stats["rate_limiter"] = _rate_limiter.get_stats()
+
+    if _circuit_breakers:
+        stats["circuit_breakers"] = {
+            node_key: breaker.get_state()
+            for node_key, breaker in _circuit_breakers.items()
+        }
+
+    if _graceful_shutdown:
+        stats["graceful_shutdown"] = {
+            "is_shutting_down": _graceful_shutdown.is_shutting_down,
+            "active_requests": _graceful_shutdown.active_requests,
+        }
 
     return stats
 
