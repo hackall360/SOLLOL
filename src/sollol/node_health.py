@@ -227,3 +227,119 @@ def should_force_cpu(node_config: Dict) -> bool:
         True if should force CPU mode
     """
     return node_config.get("force_cpu", False)
+
+
+# Model size estimates (in MB) - Conservative estimates for common models
+MODEL_SIZE_ESTIMATES = {
+    # Llama models
+    "llama3.2:1b": 1300,
+    "llama3.2:3b": 3300,
+    "llama3.1:8b": 8500,
+    "llama3.1:70b": 72000,
+    "llama3:8b": 8500,
+    "llama3:70b": 72000,
+    "llama2:7b": 7500,
+    "llama2:13b": 13500,
+    "llama2:70b": 72000,
+    # Mistral models
+    "mistral:7b": 7500,
+    "mixtral:8x7b": 48000,  # Sparse MoE
+    # CodeLlama
+    "codellama:7b": 7500,
+    "codellama:13b": 13500,
+    "codellama:34b": 35000,
+    "codellama:70b": 72000,
+    # Embedding models (much smaller)
+    "nomic-embed-text": 500,
+    "all-minilm": 100,
+    "bge-large": 1500,
+    # Gemma models
+    "gemma:2b": 2500,
+    "gemma:7b": 7500,
+    # Phi models
+    "phi3:mini": 4000,
+    "phi3:medium": 15000,
+}
+
+
+def estimate_model_size_mb(model: str) -> Optional[int]:
+    """
+    Estimate model size in MB.
+
+    FlockParser pattern:
+    - Check model size before routing to prevent OOM crashes
+    - Conservative estimates (actual may be smaller)
+
+    Args:
+        model: Model name (e.g., "llama3.1:8b", "llama3.1:70b")
+
+    Returns:
+        Estimated size in MB, or None if unknown
+    """
+    # Normalize model name
+    normalized = normalize_model_name(model).lower()
+
+    # Direct lookup
+    if normalized in MODEL_SIZE_ESTIMATES:
+        return MODEL_SIZE_ESTIMATES[normalized]
+
+    # Try with :8b, :70b suffixes if base name matches
+    for known_model, size in MODEL_SIZE_ESTIMATES.items():
+        if known_model.startswith(normalized + ":"):
+            return size
+
+    # Try to infer from size suffix
+    if ":1b" in normalized:
+        return 1300
+    elif ":3b" in normalized:
+        return 3300
+    elif ":7b" in normalized:
+        return 7500
+    elif ":8b" in normalized:
+        return 8500
+    elif ":13b" in normalized:
+        return 13500
+    elif ":34b" in normalized:
+        return 35000
+    elif ":70b" in normalized:
+        return 72000
+
+    # Unknown model - assume medium size (8B)
+    logger.debug(f"Unknown model size for '{model}', assuming 8B (~8500MB)")
+    return 8500
+
+
+def can_model_fit_vram(
+    model: str, available_vram_mb: int, safety_margin_mb: int = 1000
+) -> tuple[bool, str]:
+    """
+    Check if model will fit in available VRAM.
+
+    FlockParser pattern:
+    - Pre-routing VRAM check to prevent OOM crashes
+    - Safety margin for runtime overhead (context, KV cache, etc.)
+
+    Args:
+        model: Model name
+        available_vram_mb: Available VRAM in MB
+        safety_margin_mb: Safety margin for overhead (default: 1000MB)
+
+    Returns:
+        (can_fit, reason) tuple
+    """
+    model_size = estimate_model_size_mb(model)
+
+    if model_size is None:
+        # Unknown model - allow but warn
+        return True, "Unknown model size, allowing"
+
+    usable_vram = available_vram_mb - safety_margin_mb
+
+    if model_size > usable_vram:
+        return (
+            False,
+            f"Model too large: {model_size}MB > {usable_vram}MB available "
+            f"({available_vram_mb}MB - {safety_margin_mb}MB margin)",
+        )
+
+    return True, f"Model fits: {model_size}MB <= {usable_vram}MB available"

@@ -20,6 +20,8 @@ from sollol.node_health import (
     normalize_model_name,
     estimate_gpu_capability,
     should_force_cpu,
+    estimate_model_size_mb,
+    can_model_fit_vram,
 )
 
 
@@ -141,6 +143,64 @@ def test_health_monitoring_stats():
     print(f"   ✅ Baselines tracked: {len(stats['baselines'])}")
 
 
+def test_model_size_estimation():
+    """Test model size estimation."""
+    print("\n🧪 Testing Model Size Estimation...")
+
+    test_cases = [
+        ("llama3.1:8b", 8500),
+        ("llama3.1:70b", 72000),
+        ("llama3.2:1b", 1300),
+        ("llama3.2:3b", 3300),
+        ("nomic-embed-text", 500),
+        ("mistral:7b", 7500),
+        ("mixtral:8x7b", 48000),
+        ("codellama:70b", 72000),
+    ]
+
+    for model, expected_size in test_cases:
+        size = estimate_model_size_mb(model)
+        assert size == expected_size, f"Expected {expected_size}MB, got {size}MB for {model}"
+        print(f"   ✅ {model}: {size}MB")
+
+    # Test unknown model (should infer from suffix)
+    size = estimate_model_size_mb("custom-model:13b")
+    assert size == 13500
+    print(f"   ✅ custom-model:13b: {size}MB (inferred from :13b suffix)")
+
+
+def test_vram_fit_check():
+    """Test VRAM fitting checks."""
+    print("\n🧪 Testing VRAM Fit Checks...")
+
+    # Test 1: 8B model on 16GB GPU (should fit)
+    can_fit, reason = can_model_fit_vram("llama3.1:8b", available_vram_mb=16000)
+    assert can_fit, f"8B should fit in 16GB: {reason}"
+    print(f"   ✅ llama3.1:8b on 16GB GPU: {reason}")
+
+    # Test 2: 70B model on 16GB GPU (should NOT fit)
+    can_fit, reason = can_model_fit_vram("llama3.1:70b", available_vram_mb=16000)
+    assert not can_fit, f"70B should NOT fit in 16GB: {reason}"
+    print(f"   ✅ llama3.1:70b on 16GB GPU: BLOCKED - {reason}")
+
+    # Test 3: 70B model on 80GB GPU (should fit)
+    can_fit, reason = can_model_fit_vram("llama3.1:70b", available_vram_mb=80000)
+    assert can_fit, f"70B should fit in 80GB: {reason}"
+    print(f"   ✅ llama3.1:70b on 80GB GPU: {reason}")
+
+    # Test 4: Embedding model on 8GB GPU (should fit)
+    can_fit, reason = can_model_fit_vram("nomic-embed-text", available_vram_mb=8000)
+    assert can_fit, f"Embedding model should fit in 8GB: {reason}"
+    print(f"   ✅ nomic-embed-text on 8GB GPU: {reason}")
+
+    # Test 5: With custom safety margin
+    can_fit, reason = can_model_fit_vram(
+        "llama3.1:8b", available_vram_mb=10000, safety_margin_mb=2000
+    )
+    assert not can_fit, f"8B with 2GB margin should NOT fit in 10GB"
+    print(f"   ✅ llama3.1:8b on 10GB GPU (2GB margin): BLOCKED - {reason}")
+
+
 def main():
     print("=" * 70)
     print("🧪 SOLLOL FlockParser-Inspired Features Test Suite")
@@ -152,6 +212,8 @@ def main():
         test_gpu_capability_estimation()
         test_force_cpu_flag()
         test_health_monitoring_stats()
+        test_model_size_estimation()
+        test_vram_fit_check()
 
         print("\n" + "=" * 70)
         print("✅ All FlockParser feature tests passed!")
@@ -163,6 +225,8 @@ def main():
         print("  • Model Name Normalization - Handles :latest, :8b variations")
         print("  • GPU Capability Estimation - Small + batch performance tests")
         print("  • Per-Node Force CPU Mode - Debug/testing/thermal management")
+        print("  • Model Size Estimation - 20+ common models (1B to 70B)")
+        print("  • Pre-Routing VRAM Checks - Prevents OOM crashes (70B on 8GB GPU)")
 
         return 0
 
