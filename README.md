@@ -559,38 +559,57 @@ embeddings = pool.embed(model="nomic-embed-text", input=[...])
 
 ## 📊 Performance & Benchmarks
 
-### Real Benchmark Data
+### Validation Status
 
-**Actual measurements** from running SOLLOL (see [`benchmarks/results/`](benchmarks/results/) for raw data):
+**What's Been Validated ✅**
+- Single-node baseline performance measured
+- Code exists and is reviewable (75+ modules)
+- Tests pass in CI (57 tests, coverage tracked)
+- Architecture implements intelligent routing
 
-**Single Ollama Node Baseline** (llama3.2-3B, 50 requests, concurrency=5):
+**What Needs Validation ⚠️**
+- Comparative benchmarks (SOLLOL vs round-robin)
+- Multi-node performance improvements
+- Real-world latency/throughput gains
+
+📖 **See [BENCHMARKING.md](BENCHMARKING.md) for complete validation roadmap and how to run comparative tests.**
+
+---
+
+### Measured Baseline Performance
+
+**Single Ollama Node** (llama3.2-3B, 50 requests, concurrency=5):
 - ✅ **Success Rate:** 100%
 - ⚡ **Throughput:** 0.51 req/s
 - 📈 **Average Latency:** 5,659 ms
 - 📈 **P95 Latency:** 11,299 ms
 - 📈 **P99 Latency:** 12,259 ms
 
-**Test Hardware:** Single Ollama instance with 75+ models loaded
+**Hardware:** Single Ollama instance with 75+ models loaded
+**Data:** See [`benchmarks/results/`](benchmarks/results/) for raw JSON
 
-**Run Your Own Benchmarks:**
+**Run Your Own:**
 ```bash
-# Quick single-node test
+# Baseline test (no cluster needed)
 python benchmarks/simple_ollama_benchmark.py llama3.2 50
 
-# Full load balancer comparison (requires SOLLOL + multiple nodes)
+# Comparative test (requires docker-compose)
+docker-compose up -d
 python benchmarks/run_benchmarks.py --sollol-url http://localhost:8000 --duration 60
 ```
 
-### Task Distribution Performance (Projected)
+---
 
-**Note**: Multi-node comparisons require cluster setup. Estimates based on parallel execution patterns:
+### Projected Performance (Unvalidated)
+
+**Note:** These are architectural projections, not measured results. Requires multi-node cluster setup for validation.
 
 | Scenario | Without SOLLOL | With SOLLOL | Estimated Speedup |
 |----------|---------------|-------------|---------|
 | 10 agents, 5 nodes | 50s (sequential) | ~12s (parallel) | ~4x |
-| Mixed workloads | Random routing | Smart routing | 20-30% improvement* |
+| Mixed workloads | Random routing | Smart routing | 20-30% improvement |
 
-*Performance depends on workload characteristics and network latency. Run benchmarks on your hardware for accurate measurements.
+**Why unvalidated:** Comparative benchmarks require running cluster with multiple nodes. See [BENCHMARKING.md](BENCHMARKING.md) for test procedure.
 
 ### Model Sharding Performance
 
