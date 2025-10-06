@@ -1,5 +1,5 @@
 """
-SOLLOL CLI - One-command startup for performance-aware Ollama load balancing.
+SOLLOL CLI - Drop-in Ollama replacement with task distribution and model sharding.
 """
 
 import logging
@@ -7,11 +7,11 @@ from typing import Optional
 
 import typer
 
-from .cluster import start_dask, start_ray
 from .gateway import start_api
 
 app = typer.Typer(
-    name="sollol", help="SOLLOL - Super Ollama Load Balancer with performance-aware routing"
+    name="sollol",
+    help="SOLLOL - Drop-in Ollama replacement with task distribution and model sharding",
 )
 
 logging.basicConfig(
@@ -22,77 +22,98 @@ logger = logging.getLogger(__name__)
 
 @app.command()
 def up(
-    workers: int = typer.Option(2, help="Number of Ray worker actors"),
-    dask_workers: int = typer.Option(2, help="Number of Dask workers for batch processing"),
-    hosts: str = typer.Option("config/hosts.txt", help="Path to OLLOL hosts configuration file"),
-    port: int = typer.Option(8000, help="Port for FastAPI gateway"),
-    dask_scheduler: Optional[str] = typer.Option(
-        None, help="External Dask scheduler address (e.g., tcp://10.0.0.1:8786)"
+    port: int = typer.Option(11434, help="Port for SOLLOL gateway (default: 11434, Ollama's port)"),
+    rpc_backends: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated RPC backends for model sharding (e.g., '192.168.1.10:50052,192.168.1.11:50052')",
     ),
-    autobatch: bool = typer.Option(True, "--autobatch/--no-autobatch", help="Enable autonomous batch processing"),
-    autobatch_interval: int = typer.Option(60, help="Seconds between autobatch cycles"),
-    adaptive_metrics: bool = typer.Option(True, "--adaptive-metrics/--no-adaptive-metrics", help="Enable adaptive metrics feedback loop"),
-    adaptive_metrics_interval: int = typer.Option(
-        30, help="Seconds between adaptive metrics updates"
-    ),
-    distributed: bool = typer.Option(False, "--distributed/--no-distributed", help="Enable distributed coordination across multiple SOLLOL instances"),
-    redis_url: Optional[str] = typer.Option(
-        None, help="Redis URL for distributed coordination (e.g., redis://localhost:6379)"
+    ollama_nodes: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated Ollama nodes for task distribution (e.g., '192.168.1.20:11434,192.168.1.21:11434'). Auto-discovers if not set.",
     ),
 ):
     """
-    Start SOLLOL with Ray + Dask + FastAPI gateway.
+    Start SOLLOL gateway - Drop-in Ollama replacement.
+
+    SOLLOL provides TWO INDEPENDENT DISTRIBUTION MODES:
+    1. Task Distribution - Load balance agent requests across Ollama nodes (parallel execution)
+    2. Model Sharding - Distribute large models via llama.cpp RPC backends (single model, multiple nodes)
+
+    You can use one, both, or neither mode. They work independently!
+
+    Features:
+    - Listens on port 11434 (standard Ollama port)
+    - Auto-discovers Ollama nodes on network (for task distribution)
+    - Auto-discovers RPC backends (for model sharding)
+    - Automatic GGUF extraction from Ollama storage
+    - Intelligent routing: small models → Ollama, large models → llama.cpp
+    - Zero-config setup
 
     Examples:
+        # Zero-config (auto-discovers everything):
         sollol up
-        sollol up --workers 4 --dask-workers 4 --port 8000
-        sollol up --dask-scheduler tcp://10.0.0.1:8786
-        sollol up --no-adaptive-metrics  # Disable dynamic metrics
-        sollol up --redis-url redis://localhost:6379 --distributed  # Enable multi-instance coordination
+
+        # Custom port:
+        sollol up --port 8000
+
+        # Manual RPC backends for model sharding:
+        sollol up --rpc-backends "192.168.1.10:50052,192.168.1.11:50052"
+
+        # Manual Ollama nodes for task distribution:
+        sollol up --ollama-nodes "192.168.1.20:11434,192.168.1.21:11434"
+
+        # Both modes enabled:
+        sollol up --rpc-backends "10.0.0.1:50052" --ollama-nodes "10.0.0.2:11434"
     """
-    logger.info("🚀 Starting SOLLOL")
-    logger.info(f"   Ray workers: {workers}")
-    logger.info(f"   Dask workers: {dask_workers}")
-    logger.info(f"   API port: {port}")
-    logger.info(f"   Hosts file: {hosts}")
-    if dask_scheduler:
-        logger.info(f"   Dask scheduler: {dask_scheduler}")
+    logger.info("=" * 70)
+    logger.info("🚀 Starting SOLLOL Gateway")
+    logger.info("=" * 70)
+    logger.info("")
+    logger.info("Distribution Modes:")
+    logger.info("  🔀 Task Distribution - Load balance across Ollama nodes")
+    logger.info("  🔗 Model Sharding - Distribute large models via llama.cpp RPC")
+    logger.info("")
+    logger.info(f"Configuration:")
+    logger.info(f"  Port: {port}")
 
-    # Initialize distributed coordinator if enabled
-    coordinator = None
-    if distributed:
-        from .distributed_coordinator import create_coordinator
+    # Parse RPC backends
+    parsed_rpc_backends = None
+    if rpc_backends:
+        parsed_rpc_backends = []
+        for backend_str in rpc_backends.split(","):
+            backend_str = backend_str.strip()
+            if ":" in backend_str:
+                host, port_str = backend_str.rsplit(":", 1)
+                parsed_rpc_backends.append({"host": host, "port": int(port_str)})
+            else:
+                parsed_rpc_backends.append({"host": backend_str, "port": 50052})
+        logger.info(f"  RPC Backends: {len(parsed_rpc_backends)} configured")
+        logger.info("  → Model Sharding ENABLED")
+    else:
+        logger.info("  RPC Backends: Auto-discovery mode")
 
-        logger.info("🔗 Initializing distributed coordination...")
-        coordinator = create_coordinator(redis_url=redis_url, enable_distributed=True)
+    # Parse Ollama nodes
+    parsed_ollama_nodes = None
+    if ollama_nodes:
+        parsed_ollama_nodes = []
+        for node_str in ollama_nodes.split(","):
+            node_str = node_str.strip()
+            if ":" in node_str:
+                host, node_port = node_str.rsplit(":", 1)
+                parsed_ollama_nodes.append({"host": host, "port": int(node_port)})
+            else:
+                parsed_ollama_nodes.append({"host": node_str, "port": 11434})
+        logger.info(f"  Ollama Nodes: {len(parsed_ollama_nodes)} configured")
+        logger.info("  → Task Distribution ENABLED")
+    else:
+        logger.info("  Ollama Nodes: Auto-discovery mode")
 
-        if coordinator.__class__.__name__ == "RedisCoordinator":
-            logger.info(f"✅ Redis coordinator initialized: {redis_url or 'redis://localhost:6379'}")
-            logger.info("   Multiple SOLLOL instances can now coordinate routing decisions")
-        else:
-            logger.warning("⚠️  Redis unavailable, using local coordinator (no distributed state)")
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info("")
 
-    # Initialize Ray cluster with Ollama workers
-    ray_actors = start_ray(workers=workers, hosts_file=hosts)
-
-    if not ray_actors:
-        logger.error("❌ Failed to initialize Ray workers. Exiting.")
-        return
-
-    # Initialize Dask cluster
-    dask_client = start_dask(workers=dask_workers, scheduler_address=dask_scheduler)
-
-    # Start FastAPI gateway (blocking call)
-    start_api(
-        ray_actors,
-        dask_client,
-        port=port,
-        enable_autobatch=autobatch,
-        autobatch_interval=autobatch_interval,
-        enable_adaptive_metrics=adaptive_metrics,
-        adaptive_metrics_interval=adaptive_metrics_interval,
-        coordinator=coordinator,
-    )
+    # Start gateway (blocking call)
+    start_api(port=port, rpc_backends=parsed_rpc_backends, ollama_nodes=parsed_ollama_nodes)
 
 
 @app.command()
