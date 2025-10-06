@@ -72,6 +72,7 @@ line_length = 100
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 norecursedirs = ["SynapticLlamas", "venv", "build", "dist", ".git"]
+asyncio_mode = "auto"
 
 [tool.mypy]
 python_version = "3.8"
