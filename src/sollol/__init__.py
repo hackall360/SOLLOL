@@ -46,6 +46,10 @@ from sollol.hybrid_router import HybridRouter
 from sollol.llama_cpp_coordinator import LlamaCppCoordinator
 from sollol.llama_cpp_rpc import LlamaCppDistributedCluster, LlamaCppRPCClient
 
+# Distributed execution
+from sollol.execution import AsyncDistributedExecutor, DistributedExecutor
+from sollol.tasks import DistributedTask, ExecutionResult, TaskResult
+
 # Core load balancing
 from sollol.pool import OllamaPool
 from sollol.rpc_auto_setup import RPCAutoSetup, auto_setup_rpc_backends
@@ -55,16 +59,22 @@ from sollol.rpc_registry import RPCBackendRegistry
 # Legacy support
 from sollol.sollol import SOLLOL
 
-__version__ = "0.3.5"
+__version__ = "0.3.6"
 __all__ = [
     # Core
     "OllamaPool",
     "SOLLOLClient",
-    # Distributed
+    # Distributed inference
     "HybridRouter",
     "LlamaCppRPCClient",
     "LlamaCppDistributedCluster",
     "LlamaCppCoordinator",
+    # Distributed execution
+    "DistributedExecutor",
+    "AsyncDistributedExecutor",
+    "DistributedTask",
+    "TaskResult",
+    "ExecutionResult",
     # Discovery & Auto-Setup
     "discover_ollama_nodes",
     "auto_discover_rpc_backends",
