@@ -1,5 +1,6 @@
 """
-SOLLOL CLI - Drop-in Ollama replacement with task distribution and model sharding.
+SOLLOL CLI - Intelligent load balancer for Ollama clusters.
+Runs on Ollama's port (11434) and routes requests to backend Ollama nodes.
 """
 
 import logging
@@ -11,7 +12,7 @@ from .gateway import start_api
 
 app = typer.Typer(
     name="sollol",
-    help="SOLLOL - Drop-in Ollama replacement with task distribution and model sharding",
+    help="SOLLOL - Intelligent load balancer for Ollama clusters. Runs on Ollama's port, routes to backend nodes.",
 )
 
 logging.basicConfig(
@@ -23,6 +24,10 @@ logger = logging.getLogger(__name__)
 @app.command()
 def up(
     port: int = typer.Option(11434, help="Port for SOLLOL gateway (default: 11434, Ollama's port)"),
+    ray_workers: int = typer.Option(4, help="Number of Ray actors for parallel execution"),
+    dask_workers: int = typer.Option(2, help="Number of Dask workers for batch processing"),
+    batch_processing: bool = typer.Option(True, "--batch-processing/--no-batch-processing", help="Enable Dask batch processing"),
+    autobatch_interval: int = typer.Option(60, help="Seconds between autobatch cycles"),
     rpc_backends: Optional[str] = typer.Option(
         None,
         help="Comma-separated RPC backends for model sharding (e.g., '192.168.1.10:50052,192.168.1.11:50052')",
@@ -33,48 +38,57 @@ def up(
     ),
 ):
     """
-    Start SOLLOL gateway - Drop-in Ollama replacement.
+    Start SOLLOL gateway - Intelligent load balancer for Ollama clusters.
 
-    SOLLOL provides TWO INDEPENDENT DISTRIBUTION MODES:
-    1. Task Distribution - Load balance agent requests across Ollama nodes (parallel execution)
-    2. Model Sharding - Distribute large models via llama.cpp RPC backends (single model, multiple nodes)
+    SOLLOL runs on Ollama's port (11434) and routes requests to backend Ollama nodes.
 
-    You can use one, both, or neither mode. They work independently!
+    THREE DISTRIBUTION MODES:
+    1. Intelligent Task Distribution - 7-factor routing + Ray parallel execution
+    2. Batch Processing - Dask distributed batch operations (embeddings, bulk inference)
+    3. Model Sharding - Distribute large models via llama.cpp RPC backends
+
+    All modes work together for maximum performance!
 
     Features:
-    - Listens on port 11434 (standard Ollama port)
-    - Auto-discovers Ollama nodes on network (for task distribution)
-    - Auto-discovers RPC backends (for model sharding)
+    - 7-factor intelligent routing engine
+    - Ray actors for parallel request execution
+    - Dask for distributed batch processing
+    - Model sharding for 70B+ models via llama.cpp
+    - Auto-discovers Ollama nodes and RPC backends
     - Automatic GGUF extraction from Ollama storage
-    - Intelligent routing: small models → Ollama, large models → llama.cpp
     - Zero-config setup
 
     Examples:
         # Zero-config (auto-discovers everything):
         sollol up
 
-        # Custom port:
-        sollol up --port 8000
+        # Custom workers:
+        sollol up --ray-workers 8 --dask-workers 4
 
-        # Manual RPC backends for model sharding:
+        # With RPC backends for model sharding:
         sollol up --rpc-backends "192.168.1.10:50052,192.168.1.11:50052"
 
-        # Manual Ollama nodes for task distribution:
-        sollol up --ollama-nodes "192.168.1.20:11434,192.168.1.21:11434"
+        # Disable batch processing:
+        sollol up --no-batch-processing
 
-        # Both modes enabled:
-        sollol up --rpc-backends "10.0.0.1:50052" --ollama-nodes "10.0.0.2:11434"
+        # Full configuration:
+        sollol up --port 8000 --ray-workers 8 --rpc-backends "10.0.0.1:50052"
     """
     logger.info("=" * 70)
     logger.info("🚀 Starting SOLLOL Gateway")
     logger.info("=" * 70)
     logger.info("")
     logger.info("Distribution Modes:")
-    logger.info("  🔀 Task Distribution - Load balance across Ollama nodes")
-    logger.info("  🔗 Model Sharding - Distribute large models via llama.cpp RPC")
+    logger.info("  🎯 Intelligent Routing - 7-factor scoring engine")
+    logger.info("  ⚡ Ray Parallel - Concurrent request execution")
+    logger.info("  🔄 Dask Batch - Distributed bulk operations")
+    logger.info("  🔗 Model Sharding - llama.cpp distributed inference")
     logger.info("")
     logger.info(f"Configuration:")
     logger.info(f"  Port: {port}")
+    logger.info(f"  Ray workers: {ray_workers}")
+    logger.info(f"  Dask workers: {dask_workers}")
+    logger.info(f"  Batch processing: {'enabled' if batch_processing else 'disabled'}")
 
     # Parse RPC backends
     parsed_rpc_backends = None
@@ -113,7 +127,15 @@ def up(
     logger.info("")
 
     # Start gateway (blocking call)
-    start_api(port=port, rpc_backends=parsed_rpc_backends, ollama_nodes=parsed_ollama_nodes)
+    start_api(
+        port=port,
+        rpc_backends=parsed_rpc_backends,
+        ollama_nodes=parsed_ollama_nodes,
+        ray_workers=ray_workers,
+        dask_workers=dask_workers,
+        enable_batch_processing=batch_processing,
+        autobatch_interval=autobatch_interval,
+    )
 
 
 @app.command()
