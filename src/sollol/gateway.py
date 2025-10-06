@@ -25,6 +25,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from sollol.adaptive_parallelism import AdaptiveParallelismStrategy
 from sollol.autobatch import autobatch_loop
+from sollol.batch import embed_documents, run_batch_pipeline
+from sollol.batch_manager import BatchJobManager
 from sollol.circuit_breaker import CircuitBreaker
 from sollol.embedding_cache import EmbeddingCache
 from sollol.graceful_shutdown import GracefulShutdown, GracefulShutdownMiddleware
@@ -39,7 +41,7 @@ from sollol.workers import OllamaWorker
 logger = logging.getLogger(__name__)
 
 # Version from pyproject.toml
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 
 class SOLLOLHeadersMiddleware(BaseHTTPMiddleware):
@@ -60,6 +62,17 @@ app = FastAPI(
 # Add SOLLOL identification headers to all responses
 app.add_middleware(SOLLOLHeadersMiddleware)
 
+
+# Startup event: Start autobatch loop when event loop is ready
+@app.on_event("startup")
+async def startup_event():
+    """Start autobatch loop when FastAPI event loop is running."""
+    if _dask_client and _autobatch_interval:
+        logger.info(f"🔄 Starting autobatch loop (interval: {_autobatch_interval}s)...")
+        asyncio.create_task(autobatch_loop(_dask_client, interval_sec=_autobatch_interval))
+        logger.info("✅ Autobatch loop started")
+
+
 # Global instances
 _ollama_pool: Optional[OllamaPool] = None
 _hybrid_router: Optional[HybridRouter] = None
@@ -73,6 +86,8 @@ _graceful_shutdown: Optional[GracefulShutdown] = None
 _circuit_breakers: Dict[str, CircuitBreaker] = {}
 _retry_config: Optional[RetryConfig] = None
 _timeout_manager: Optional[TimeoutManager] = None
+_batch_manager: Optional[BatchJobManager] = None
+_autobatch_interval: int = 60  # Autobatch interval in seconds
 
 
 def start_api(
@@ -144,7 +159,7 @@ def start_api(
     Note: SOLLOL runs on port 11434 (Ollama's port). Make sure local Ollama
           is either disabled or running on a different port (e.g., 11435).
     """
-    global _ollama_pool, _hybrid_router, _ray_actors, _dask_client, _vram_monitor, _adaptive_parallelism, _embedding_cache, _rate_limiter, _graceful_shutdown, _circuit_breakers, _retry_config, _timeout_manager
+    global _ollama_pool, _hybrid_router, _ray_actors, _dask_client, _vram_monitor, _adaptive_parallelism, _embedding_cache, _rate_limiter, _graceful_shutdown, _circuit_breakers, _retry_config, _timeout_manager, _batch_manager, _autobatch_interval
 
     # Parse ALL configuration from environment variables (for programmatic/container deployments)
     port = int(os.getenv("SOLLOL_PORT", os.getenv("PORT", port)))
@@ -152,6 +167,10 @@ def start_api(
     dask_workers = int(os.getenv("SOLLOL_DASK_WORKERS", os.getenv("DASK_WORKERS", dask_workers)))
     enable_batch_processing = os.getenv("SOLLOL_BATCH_PROCESSING", str(enable_batch_processing)).lower() in ("true", "1", "yes")
     autobatch_interval = int(os.getenv("SOLLOL_AUTOBATCH_INTERVAL", os.getenv("AUTOBATCH_INTERVAL", autobatch_interval)))
+
+    # Store autobatch interval globally for startup event
+    global _autobatch_interval
+    _autobatch_interval = autobatch_interval
 
     # Initialize Ray cluster for parallel execution
     logger.info("🚀 Initializing Ray cluster for parallel request execution...")
@@ -174,10 +193,7 @@ def start_api(
             )
             _dask_client = DaskClient(cluster)
             logger.info(f"✅ Dask initialized with {dask_workers} workers for batch operations")
-
-            # Start autobatch loop
-            asyncio.create_task(autobatch_loop(_dask_client, interval_sec=autobatch_interval))
-            logger.info(f"✅ Autobatch loop started (interval: {autobatch_interval}s)")
+            logger.info(f"   Autobatch loop will start on FastAPI startup (interval: {autobatch_interval}s)")
         except Exception as e:
             logger.warning(f"⚠️  Dask initialization failed: {e}")
             logger.warning("    Batch processing disabled")
@@ -283,6 +299,16 @@ def start_api(
     logger.info(
         f"✅ Request timeouts enabled (chat: {chat_timeout}s, generate: {generate_timeout}s, embed: {embed_timeout}s)"
     )
+
+    # Batch job manager (for /api/batch/* endpoints)
+    if enable_batch_processing and _dask_client:
+        _batch_manager = BatchJobManager(max_jobs=1000, job_ttl_seconds=3600)
+        logger.info("✅ Batch job manager enabled (max_jobs: 1000, TTL: 3600s)")
+    else:
+        if not enable_batch_processing:
+            logger.info("⏭️  Batch job manager disabled (--no-batch-processing)")
+        elif not _dask_client:
+            logger.info("⏭️  Batch job manager disabled (Dask client not available)")
 
     # Create hybrid router with model sharding support if RPC backends configured
     if rpc_backends:
@@ -770,7 +796,228 @@ def stats_endpoint():
     if _timeout_manager:
         stats["request_timeouts"] = _timeout_manager.get_stats()
 
+    if _batch_manager:
+        stats["batch_jobs"] = _batch_manager.get_stats()
+
     return stats
+
+
+# ============================================================================
+# BATCH PROCESSING ENDPOINTS
+# ============================================================================
+
+
+@app.post("/api/batch/embed")
+async def batch_embed_endpoint(request: Request):
+    """
+    Submit batch embedding job.
+
+    Process hundreds or thousands of documents in parallel using Dask.
+
+    Request body:
+        {
+            "model": "nomic-embed-text",
+            "documents": ["doc1", "doc2", ...],  // up to 10,000 documents
+            "metadata": {}  // optional metadata
+        }
+
+    Returns:
+        {
+            "job_id": "uuid",
+            "status": "pending",
+            "total_items": 1000
+        }
+    """
+    if not _batch_manager:
+        raise HTTPException(
+            status_code=503,
+            detail="Batch processing disabled. Start gateway with --batch-processing",
+        )
+
+    if not _dask_client:
+        raise HTTPException(
+            status_code=503, detail="Dask client not initialized. Batch processing unavailable."
+        )
+
+    try:
+        payload = await request.json()
+        model = payload.get("model", "nomic-embed-text")
+        documents = payload.get("documents", [])
+        metadata = payload.get("metadata", {})
+
+        if not documents:
+            raise HTTPException(status_code=400, detail="No documents provided")
+
+        if len(documents) > 10000:
+            raise HTTPException(
+                status_code=400,
+                detail="Maximum 10,000 documents per batch. Split into multiple batches.",
+            )
+
+        # Create job
+        job_id = _batch_manager.create_job(
+            job_type="embed",
+            total_items=len(documents),
+            metadata={"model": model, **metadata},
+        )
+
+        # Start job
+        _batch_manager.start_job(job_id)
+
+        # Submit to Dask
+        try:
+            tasks = embed_documents(documents, model)
+            futures = _dask_client.compute(tasks, sync=False)
+
+            # Track completion asynchronously
+            async def track_completion():
+                try:
+                    results = await asyncio.gather(*[asyncio.to_thread(f.result) for f in futures])
+                    _batch_manager.complete_job(job_id, results=results, errors=[])
+                except Exception as e:
+                    _batch_manager.fail_job(job_id, str(e))
+
+            # Fire and forget
+            asyncio.create_task(track_completion())
+
+            return {
+                "job_id": job_id,
+                "status": "running",
+                "total_items": len(documents),
+                "message": f"Batch embedding job submitted with {len(documents)} documents",
+            }
+
+        except Exception as e:
+            _batch_manager.fail_job(job_id, str(e))
+            raise HTTPException(status_code=500, detail=f"Failed to submit batch job: {e}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Batch embed endpoint error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/batch/jobs/{job_id}")
+async def batch_job_status_endpoint(job_id: str):
+    """
+    Get batch job status.
+
+    Returns:
+        {
+            "job_id": "uuid",
+            "job_type": "embed",
+            "status": "running",
+            "progress": {
+                "total_items": 1000,
+                "completed_items": 450,
+                "failed_items": 2,
+                "percent": 45.0
+            },
+            "duration_seconds": 12.5
+        }
+    """
+    if not _batch_manager:
+        raise HTTPException(status_code=503, detail="Batch processing disabled")
+
+    status = _batch_manager.get_job_status(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    return status
+
+
+@app.get("/api/batch/results/{job_id}")
+async def batch_job_results_endpoint(job_id: str):
+    """
+    Get batch job results.
+
+    Returns:
+        {
+            "job_id": "uuid",
+            "status": "completed",
+            "results": [...],  // array of results
+            "errors": [],  // array of errors
+            "total_items": 1000,
+            "completed_items": 998,
+            "failed_items": 2
+        }
+    """
+    if not _batch_manager:
+        raise HTTPException(status_code=503, detail="Batch processing disabled")
+
+    results = _batch_manager.get_job_results(job_id)
+    if not results:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    # Don't return results if still running
+    job = _batch_manager.get_job(job_id)
+    if job and job.status.value == "running":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job still running. Check status at /api/batch/jobs/{job_id}",
+        )
+
+    return results
+
+
+@app.delete("/api/batch/jobs/{job_id}")
+async def batch_job_cancel_endpoint(job_id: str):
+    """
+    Cancel a running batch job.
+
+    Returns:
+        {
+            "job_id": "uuid",
+            "cancelled": true,
+            "message": "Job cancelled successfully"
+        }
+    """
+    if not _batch_manager:
+        raise HTTPException(status_code=503, detail="Batch processing disabled")
+
+    cancelled = _batch_manager.cancel_job(job_id)
+    if not cancelled:
+        raise HTTPException(
+            status_code=404, detail=f"Job {job_id} not found or already completed"
+        )
+
+    return {
+        "job_id": job_id,
+        "cancelled": True,
+        "message": "Job cancelled successfully",
+    }
+
+
+@app.get("/api/batch/jobs")
+async def batch_jobs_list_endpoint(limit: int = 100):
+    """
+    List recent batch jobs.
+
+    Query parameters:
+        limit: Maximum number of jobs to return (default: 100)
+
+    Returns:
+        {
+            "jobs": [
+                {
+                    "job_id": "uuid",
+                    "job_type": "embed",
+                    "status": "completed",
+                    "progress": {...},
+                    ...
+                },
+                ...
+            ],
+            "total": 50
+        }
+    """
+    if not _batch_manager:
+        raise HTTPException(status_code=503, detail="Batch processing disabled")
+
+    jobs = _batch_manager.list_jobs(limit=min(limit, 1000))
+
+    return {"jobs": jobs, "total": len(jobs)}
 
 
 @app.get("/")
