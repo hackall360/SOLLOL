@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sollol"
-version = "0.3.6"
-description = "Super Ollama Load Balancer with Intelligent Routing and Distributed Inference"
+version = "0.4.0"
+description = "Intelligent Load Balancer for Ollama Clusters - 3 Distribution Modes: Ray Parallel + Dask Batch + llama.cpp Sharding"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
