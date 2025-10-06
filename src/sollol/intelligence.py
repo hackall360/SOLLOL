@@ -40,7 +40,7 @@ class IntelligentRouter:
     - Learns from historical patterns
     """
 
-    def __init__(self):
+    def __init__(self, coordinator=None):
         self.task_patterns = {
             "embedding": [
                 r"embed",
@@ -84,6 +84,9 @@ class IntelligentRouter:
 
         # Node capabilities (GPU, CPU-heavy models, etc.)
         self.node_capabilities: Dict[str, Dict] = {}
+
+        # Distributed coordination (if enabled)
+        self.coordinator = coordinator
 
     def detect_task_type(self, payload: Dict) -> str:
         """
@@ -198,6 +201,12 @@ class IntelligentRouter:
         """
         Select the optimal OLLOL node for this request based on context.
 
+        With distributed coordination enabled, this method:
+        1. Acquires distributed lock for atomic routing
+        2. Gets aggregated cluster state from all instances
+        3. Makes routing decision with global state
+        4. Immediately updates global active request count
+
         Args:
             context: Task context from analyze_request()
             available_hosts: List of available host metadata
@@ -211,6 +220,56 @@ class IntelligentRouter:
         if not available:
             raise ValueError("No available hosts")
 
+        # If distributed coordination enabled, use it
+        if self.coordinator:
+            # Use distributed lock for atomic routing decision
+            with self.coordinator.routing_lock():
+                # Update host metadata with aggregated state from all instances
+                for host_meta in available:
+                    host_addr = host_meta["host"]
+                    aggregated_state = self.coordinator.get_aggregated_node_state(host_addr)
+
+                    if aggregated_state:
+                        # Override local state with global aggregated state
+                        host_meta["active_requests"] = aggregated_state.active_requests
+                        host_meta["cpu_load"] = aggregated_state.cpu_load
+                        host_meta["gpu_free_mem"] = aggregated_state.gpu_free_mem
+                        host_meta["success_rate"] = aggregated_state.success_rate
+                        host_meta["latency_ms"] = aggregated_state.avg_latency_ms
+
+                # Score each host with global state
+                scored_hosts = []
+                for host_meta in available:
+                    score = self._score_host_for_context(host_meta, context)
+                    scored_hosts.append((host_meta, score))
+
+                # Sort by score (descending)
+                scored_hosts.sort(key=lambda x: x[1], reverse=True)
+
+                # Select best host
+                best_host, best_score = scored_hosts[0]
+                selected_host_addr = best_host["host"]
+
+                # Immediately increment active requests in global state
+                new_count = self.coordinator.increment_active_requests(selected_host_addr)
+
+                # Build decision reasoning
+                decision = {
+                    "selected_host": selected_host_addr,
+                    "score": best_score,
+                    "task_type": context.task_type,
+                    "complexity": context.complexity,
+                    "reasoning": self._explain_decision(best_host, context, scored_hosts),
+                    "alternatives": [
+                        {"host": h["host"], "score": s} for h, s in scored_hosts[1:3]  # Top 2 alternatives
+                    ],
+                    "distributed": True,
+                    "global_active_requests": new_count,
+                }
+
+                return selected_host_addr, decision
+
+        # Local mode (no distributed coordination)
         # Score each host
         scored_hosts = []
         for host_meta in available:
@@ -233,6 +292,7 @@ class IntelligentRouter:
             "alternatives": [
                 {"host": h["host"], "score": s} for h, s in scored_hosts[1:3]  # Top 2 alternatives
             ],
+            "distributed": False,
         }
 
         return best_host["host"], decision
@@ -435,9 +495,27 @@ class IntelligentRouter:
 
 
 # Global router instance
-_router = IntelligentRouter()
+_router = None
 
 
-def get_router() -> IntelligentRouter:
-    """Get the global intelligent router instance."""
+def get_router(coordinator=None) -> IntelligentRouter:
+    """
+    Get the global intelligent router instance.
+
+    Args:
+        coordinator: Optional distributed coordinator for multi-instance coordination
+
+    Returns:
+        IntelligentRouter instance (creates new one if coordinator provided, else returns global)
+    """
+    global _router
+
+    # If coordinator provided, create new router with it
+    if coordinator is not None:
+        return IntelligentRouter(coordinator=coordinator)
+
+    # Otherwise, return or create global instance
+    if _router is None:
+        _router = IntelligentRouter()
+
     return _router

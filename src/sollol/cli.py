@@ -34,6 +34,10 @@ def up(
     adaptive_metrics_interval: int = typer.Option(
         30, help="Seconds between adaptive metrics updates"
     ),
+    redis_url: str = typer.Option(
+        None, help="Redis URL for distributed coordination (e.g., redis://localhost:6379)"
+    ),
+    distributed: bool = typer.Option(False, "--distributed/--no-distributed", help="Enable distributed coordination across multiple SOLLOL instances"),
 ):
     """
     Start SOLLOL with Ray + Dask + FastAPI gateway.
@@ -43,6 +47,7 @@ def up(
         sollol up --workers 4 --dask-workers 4 --port 8000
         sollol up --dask-scheduler tcp://10.0.0.1:8786
         sollol up --no-adaptive-metrics  # Disable dynamic metrics
+        sollol up --redis-url redis://localhost:6379 --distributed  # Enable multi-instance coordination
     """
     logger.info("🚀 Starting SOLLOL")
     logger.info(f"   Ray workers: {workers}")
@@ -51,6 +56,20 @@ def up(
     logger.info(f"   Hosts file: {hosts}")
     if dask_scheduler:
         logger.info(f"   Dask scheduler: {dask_scheduler}")
+
+    # Initialize distributed coordinator if enabled
+    coordinator = None
+    if distributed:
+        from .distributed_coordinator import create_coordinator
+
+        logger.info("🔗 Initializing distributed coordination...")
+        coordinator = create_coordinator(redis_url=redis_url, enable_distributed=True)
+
+        if coordinator.__class__.__name__ == "RedisCoordinator":
+            logger.info(f"✅ Redis coordinator initialized: {redis_url or 'redis://localhost:6379'}")
+            logger.info("   Multiple SOLLOL instances can now coordinate routing decisions")
+        else:
+            logger.warning("⚠️  Redis unavailable, using local coordinator (no distributed state)")
 
     # Initialize Ray cluster with Ollama workers
     ray_actors = start_ray(workers=workers, hosts_file=hosts)
@@ -71,6 +90,7 @@ def up(
         autobatch_interval=autobatch_interval,
         enable_adaptive_metrics=adaptive_metrics,
         adaptive_metrics_interval=adaptive_metrics_interval,
+        coordinator=coordinator,
     )
 
 
