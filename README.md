@@ -55,7 +55,7 @@ responses = await asyncio.gather(*[
     pool.chat(model="llama3.2", messages=[...])
     for _ in range(10)
 ])
-# 5x faster than sequential execution!
+# Parallel execution across available nodes
 ```
 
 #### 🧩 Model Sharding (Vertical Scaling)
@@ -604,12 +604,12 @@ python benchmarks/run_benchmarks.py --sollol-url http://localhost:8000 --duratio
 
 **Note:** These are architectural projections, not measured results. Requires multi-node cluster setup for validation.
 
-| Scenario | Without SOLLOL | With SOLLOL | Estimated Speedup |
-|----------|---------------|-------------|---------|
-| 10 agents, 5 nodes | 50s (sequential) | ~12s (parallel) | ~4x |
-| Mixed workloads | Random routing | Smart routing | 20-30% improvement |
+**Theory:** With N nodes and parallelizable workload:
+- Task distribution can approach N× parallelization (limited by request rate)
+- Intelligent routing should reduce tail latencies vs random selection
+- Resource-aware placement reduces contention and failures
 
-**Why unvalidated:** Comparative benchmarks require running cluster with multiple nodes. See [BENCHMARKING.md](BENCHMARKING.md) for test procedure.
+**Reality:** Requires multi-node cluster validation. See [BENCHMARKING.md](BENCHMARKING.md) for test procedure and [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md) for implementation details.
 
 ### Model Sharding Performance
 

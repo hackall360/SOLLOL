@@ -1,14 +1,30 @@
-version: '3.8'
-
-# Quick test compose file - single Ollama node
+# Quick test compose file - 3 Ollama nodes for benchmarking
 services:
-  ollama:
+  ollama-1:
     image: ollama/ollama:latest
     ports:
-      - "11434:11434"
+      - "11435:11434"  # Map to different host port
     volumes:
-      - ollama-models:/root/.ollama
+      - ollama-models-1:/root/.ollama
+    restart: unless-stopped
+
+  ollama-2:
+    image: ollama/ollama:latest
+    ports:
+      - "11436:11434"
+    volumes:
+      - ollama-models-2:/root/.ollama
+    restart: unless-stopped
+
+  ollama-3:
+    image: ollama/ollama:latest
+    ports:
+      - "11437:11434"
+    volumes:
+      - ollama-models-3:/root/.ollama
     restart: unless-stopped
 
 volumes:
-  ollama-models:
+  ollama-models-1:
+  ollama-models-2:
+  ollama-models-3:
