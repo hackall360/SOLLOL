@@ -31,6 +31,7 @@ from sollol.graceful_shutdown import GracefulShutdown, GracefulShutdownMiddlewar
 from sollol.hybrid_router import HybridRouter
 from sollol.pool import OllamaPool
 from sollol.rate_limiter import RateLimiter, RateLimitExceeded
+from sollol.request_timeout import RequestTimeoutError, TimeoutConfig, TimeoutManager
 from sollol.retry_logic import RetryConfig, RetryableRequest
 from sollol.vram_monitor import VRAMMonitor
 from sollol.workers import OllamaWorker
@@ -38,7 +39,7 @@ from sollol.workers import OllamaWorker
 logger = logging.getLogger(__name__)
 
 # Version from pyproject.toml
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 
 class SOLLOLHeadersMiddleware(BaseHTTPMiddleware):
@@ -71,6 +72,7 @@ _rate_limiter: Optional[RateLimiter] = None
 _graceful_shutdown: Optional[GracefulShutdown] = None
 _circuit_breakers: Dict[str, CircuitBreaker] = {}
 _retry_config: Optional[RetryConfig] = None
+_timeout_manager: Optional[TimeoutManager] = None
 
 
 def start_api(
@@ -142,7 +144,7 @@ def start_api(
     Note: SOLLOL runs on port 11434 (Ollama's port). Make sure local Ollama
           is either disabled or running on a different port (e.g., 11435).
     """
-    global _ollama_pool, _hybrid_router, _ray_actors, _dask_client, _vram_monitor, _adaptive_parallelism, _embedding_cache, _rate_limiter, _graceful_shutdown, _circuit_breakers, _retry_config
+    global _ollama_pool, _hybrid_router, _ray_actors, _dask_client, _vram_monitor, _adaptive_parallelism, _embedding_cache, _rate_limiter, _graceful_shutdown, _circuit_breakers, _retry_config, _timeout_manager
 
     # Parse ALL configuration from environment variables (for programmatic/container deployments)
     port = int(os.getenv("SOLLOL_PORT", os.getenv("PORT", port)))
@@ -267,6 +269,20 @@ def start_api(
     _graceful_shutdown = GracefulShutdown(timeout=shutdown_timeout)
     _graceful_shutdown.setup_signal_handlers()
     logger.info(f"✅ Graceful shutdown enabled (timeout: {shutdown_timeout}s)")
+
+    # Request timeouts (generous defaults for CPU/resource-constrained environments)
+    chat_timeout = float(os.getenv("SOLLOL_CHAT_TIMEOUT", "300"))  # 5 minutes
+    generate_timeout = float(os.getenv("SOLLOL_GENERATE_TIMEOUT", "300"))  # 5 minutes
+    embed_timeout = float(os.getenv("SOLLOL_EMBED_TIMEOUT", "60"))  # 1 minute
+    timeout_config = TimeoutConfig(
+        chat_timeout=chat_timeout,
+        generate_timeout=generate_timeout,
+        embed_timeout=embed_timeout,
+    )
+    _timeout_manager = TimeoutManager(timeout_config)
+    logger.info(
+        f"✅ Request timeouts enabled (chat: {chat_timeout}s, generate: {generate_timeout}s, embed: {embed_timeout}s)"
+    )
 
     # Create hybrid router with model sharding support if RPC backends configured
     if rpc_backends:
@@ -422,15 +438,25 @@ async def chat_endpoint(request: Request):
                 result = _ollama_pool.chat(model=model, messages=messages)
                 return result, "sequential", "none"
 
-        # Execute with circuit breaker + retry logic
-        if _retry_config:
-            retrier = RetryableRequest(_retry_config)
-            result, execution_mode, actor_info = await retrier.execute_async(
-                lambda: breaker.call_async(execute_request),
-                exceptions=(Exception,)
+        # Define full execution with circuit breaker + retry
+        async def execute_with_resilience():
+            if _retry_config:
+                retrier = RetryableRequest(_retry_config)
+                return await retrier.execute_async(
+                    lambda: breaker.call_async(execute_request),
+                    exceptions=(Exception,)
+                )
+            else:
+                return await breaker.call_async(execute_request)
+
+        # Execute with timeout + circuit breaker + retry logic
+        if _timeout_manager:
+            result, execution_mode, actor_info = await _timeout_manager.execute_with_timeout(
+                execute_with_resilience,
+                operation_type="chat"
             )
         else:
-            result, execution_mode, actor_info = await breaker.call_async(execute_request)
+            result, execution_mode, actor_info = await execute_with_resilience()
 
         # Add routing metadata
         if isinstance(result, dict):
@@ -448,6 +474,13 @@ async def chat_endpoint(request: Request):
         # Model not found in Ollama storage
         raise HTTPException(
             status_code=404, detail=f"Model not found: {str(e)}. Pull with: ollama pull {model}"
+        )
+    except RequestTimeoutError as e:
+        # Request timed out
+        logger.warning(f"Chat request timed out: {e}")
+        raise HTTPException(
+            status_code=504,
+            detail=f"Request timed out after {e.timeout_seconds}s. Consider increasing SOLLOL_CHAT_TIMEOUT for resource-constrained environments."
         )
     except Exception as e:
         logger.error(f"Chat endpoint error: {e}", exc_info=True)
@@ -518,17 +551,34 @@ async def generate_endpoint(request: Request):
         async def execute_request():
             return _ollama_pool.generate(model=model, prompt=prompt)
 
-        # Execute with circuit breaker + retry logic
-        if _retry_config:
-            retrier = RetryableRequest(_retry_config)
-            result = await retrier.execute_async(
-                lambda: breaker.call_async(execute_request),
-                exceptions=(Exception,)
+        # Define full execution with circuit breaker + retry
+        async def execute_with_resilience():
+            if _retry_config:
+                retrier = RetryableRequest(_retry_config)
+                return await retrier.execute_async(
+                    lambda: breaker.call_async(execute_request),
+                    exceptions=(Exception,)
+                )
+            else:
+                return await breaker.call_async(execute_request)
+
+        # Execute with timeout + circuit breaker + retry logic
+        if _timeout_manager:
+            result = await _timeout_manager.execute_with_timeout(
+                execute_with_resilience,
+                operation_type="generate"
             )
         else:
-            result = await breaker.call_async(execute_request)
+            result = await execute_with_resilience()
 
         return result
+    except RequestTimeoutError as e:
+        # Request timed out
+        logger.warning(f"Generate request timed out: {e}")
+        raise HTTPException(
+            status_code=504,
+            detail=f"Request timed out after {e.timeout_seconds}s. Consider increasing SOLLOL_GENERATE_TIMEOUT for resource-constrained environments."
+        )
     except Exception as e:
         logger.error(f"Generate endpoint error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -652,6 +702,12 @@ async def health_check():
             "active_requests": _graceful_shutdown.active_requests if _graceful_shutdown else 0,
             "timeout_seconds": _graceful_shutdown.timeout if _graceful_shutdown else None,
         },
+        "request_timeouts": {
+            "enabled": _timeout_manager is not None,
+            "chat_timeout_seconds": _timeout_manager.config.chat_timeout if _timeout_manager else None,
+            "generate_timeout_seconds": _timeout_manager.config.generate_timeout if _timeout_manager else None,
+            "embed_timeout_seconds": _timeout_manager.config.embed_timeout if _timeout_manager else None,
+        },
     }
 
     return health_status
@@ -710,6 +766,9 @@ def stats_endpoint():
             "is_shutting_down": _graceful_shutdown.is_shutting_down,
             "active_requests": _graceful_shutdown.active_requests,
         }
+
+    if _timeout_manager:
+        stats["request_timeouts"] = _timeout_manager.get_stats()
 
     return stats
 
