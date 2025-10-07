@@ -118,8 +118,35 @@ class UnifiedDashboard:
         # Initialize Dask if requested
         if enable_dask:
             try:
-                from dask.distributed import Client
-                self.dask_client = Client()
+                from dask.distributed import LocalCluster, Client
+                # Configure Dask to silence worker warnings
+                import dask
+                import os
+
+                # Set environment variables before cluster creation (workers inherit these)
+                os.environ['DASK_DISTRIBUTED__LOGGING__DISTRIBUTED'] = 'error'
+                os.environ['DASK_LOGGING__DISTRIBUTED'] = 'error'
+
+                dask.config.set({"distributed.worker.daemon": False})
+                dask.config.set({"distributed.logging.distributed": "error"})
+                dask.config.set({"logging.distributed": "error"})
+                dask.config.set({"distributed.admin.tick.interval": "500ms"})
+
+                # Create cluster with minimal workers
+                cluster = LocalCluster(
+                    n_workers=1,
+                    threads_per_worker=2,
+                    dashboard_address=f":{dask_dashboard_port}",
+                )
+
+                self.dask_client = Client(cluster)
+
+                # Apply logging suppression to all distributed loggers after client creation
+                logging.getLogger('distributed').setLevel(logging.ERROR)
+                logging.getLogger('distributed.worker').setLevel(logging.ERROR)
+                logging.getLogger('distributed.scheduler').setLevel(logging.ERROR)
+                logging.getLogger('distributed.nanny').setLevel(logging.ERROR)
+                logging.getLogger('distributed.core').setLevel(logging.ERROR)
 
                 # Get actual dashboard URL from client (may be on different port if 8787 was taken)
                 if hasattr(self.dask_client, 'dashboard_link'):
@@ -171,8 +198,9 @@ class UnifiedDashboard:
         def metrics():
             """Get SOLLOL metrics."""
             try:
-                if self.router:
-                    stats = asyncio.run(self.router.get_stats())
+                if self.router and hasattr(self.router, 'get_stats'):
+                    # get_stats() is not async - call it directly
+                    stats = self.router.get_stats()
                 else:
                     stats = {}
 
@@ -189,20 +217,32 @@ class UnifiedDashboard:
             """Get all Ollama nodes in the network (universal)."""
             try:
                 # Try to get from router's pool
-                if self.router and hasattr(self.router, 'ollama_pool'):
+                if self.router and hasattr(self.router, 'ollama_pool') and self.router.ollama_pool:
                     pool = self.router.ollama_pool
                     nodes = []
                     for node in pool.nodes:
-                        nodes.append({
-                            "url": node.url,
-                            "healthy": node.healthy,
-                            "last_latency_ms": node.last_latency_ms,
-                            "failure_count": node.failure_count,
-                            "models": node.models,
-                            "total_vram_mb": node.total_vram_mb,
-                            "free_vram_mb": node.free_vram_mb,
-                            "status": "healthy" if node.healthy else "unhealthy",
-                        })
+                        # Handle both OllamaNode objects and dict formats
+                        if isinstance(node, dict):
+                            url = f"http://{node.get('host', 'localhost')}:{node.get('port', 11434)}"
+                            nodes.append({
+                                "url": url,
+                                "status": "healthy",
+                                "latency_ms": 0,
+                                "load_percent": 0,
+                                "memory_mb": 0,
+                            })
+                        else:
+                            # OllamaNode object
+                            nodes.append({
+                                "url": node.url,
+                                "healthy": node.healthy,
+                                "last_latency_ms": node.last_latency_ms,
+                                "failure_count": node.failure_count,
+                                "models": node.models,
+                                "total_vram_mb": node.total_vram_mb,
+                                "free_vram_mb": node.free_vram_mb,
+                                "status": "healthy" if node.healthy else "unhealthy",
+                            })
                     return jsonify({"nodes": nodes, "total": len(nodes)})
                 else:
                     # Fallback: auto-discover nodes and transform to expected format
@@ -921,22 +961,50 @@ class UnifiedDashboard:
         request_counter.labels(model=model, status=status, backend=backend).inc()
         request_duration.labels(model=model, backend=backend).observe(latency_ms / 1000)
 
-    def run(self, host: str = "0.0.0.0", debug: bool = False):
-        """Run dashboard server (production-ready with Waitress)."""
+    def run(self, host: str = "0.0.0.0", debug: bool = False, allow_fallback: bool = True):
+        """
+        Run dashboard server (production-ready with Waitress).
+
+        Args:
+            host: Host to bind to
+            debug: Enable debug mode
+            allow_fallback: If True and port is in use, assume another dashboard is running
+        """
+        # Check if dashboard is already running on this port
+        if allow_fallback:
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            result = sock.connect_ex(('localhost', self.dashboard_port))
+            sock.close()
+
+            if result == 0:
+                # Port is in use - another dashboard is likely running
+                logger.info(f"📊 Dashboard already running on port {self.dashboard_port}")
+                logger.info(f"   Connecting to existing dashboard at http://localhost:{self.dashboard_port}")
+                logger.info("✅ Application will use shared dashboard for observability")
+                return  # Don't start a new server
+
         logger.info(f"🚀 Starting Unified Dashboard on http://{host}:{self.dashboard_port}")
         logger.info(f"   Ray Dashboard: http://localhost:{self.ray_dashboard_port}")
         logger.info(f"   Dask Dashboard: http://localhost:{self.dask_dashboard_port}")
         logger.info(f"   Prometheus: http://{host}:{self.dashboard_port}/api/prometheus")
 
-        if debug:
-            # Development mode - use Flask's dev server
-            logger.warning("⚠️  Running in DEBUG mode - not for production!")
-            self.app.run(host=host, port=self.dashboard_port, debug=True)
-        else:
-            # Production mode - use Waitress
-            from waitress import serve
-            logger.info("✅ Using Waitress production server")
-            serve(self.app, host=host, port=self.dashboard_port, threads=4)
+        try:
+            if debug:
+                # Development mode - use Flask's dev server
+                logger.warning("⚠️  Running in DEBUG mode - not for production!")
+                self.app.run(host=host, port=self.dashboard_port, debug=True)
+            else:
+                # Production mode - use Waitress
+                from waitress import serve
+                logger.info("✅ Using Waitress production server")
+                serve(self.app, host=host, port=self.dashboard_port, threads=4)
+        except OSError as e:
+            if "Address already in use" in str(e):
+                logger.warning(f"⚠️  Port {self.dashboard_port} already in use")
+                logger.info("✅ Assuming another SOLLOL dashboard is running - using shared instance")
+            else:
+                raise
 
 
 # Unified Dashboard HTML Template
@@ -1011,6 +1079,11 @@ UNIFIED_DASHBOARD_HTML = """
             min-height: 250px;
             max-height: 400px;
         }
+        .dashboard-panel.full-height {
+            min-height: 500px;
+            max-height: 500px;
+            height: 500px;
+        }
         .panel-header {
             background: #334155;
             padding: 0.75rem 1rem;
@@ -1021,6 +1094,10 @@ UNIFIED_DASHBOARD_HTML = """
             flex: 1;
             overflow: auto;
             min-height: 200px;
+        }
+        .full-height .panel-content {
+            height: 450px;
+            min-height: 450px;
         }
         iframe {
             width: 100%;
@@ -1198,7 +1275,7 @@ UNIFIED_DASHBOARD_HTML = """
         </div>
 
         <!-- Ray Dashboard -->
-        <div class="dashboard-panel">
+        <div class="dashboard-panel full-height">
             <div class="panel-header">
                 <span class="status-indicator" id="ray-status"></span>
                 Ray Dashboard
@@ -1211,7 +1288,7 @@ UNIFIED_DASHBOARD_HTML = """
         </div>
 
         <!-- Dask Dashboard -->
-        <div class="dashboard-panel">
+        <div class="dashboard-panel full-height">
             <div class="panel-header">
                 <span class="status-indicator" id="dask-status"></span>
                 Dask Dashboard

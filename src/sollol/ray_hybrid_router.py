@@ -210,6 +210,10 @@ class RayHybridRouter:
         self.rpc_backends = rpc_backends or []
         self.has_rpc_backends = len(self.rpc_backends) > 0
 
+        # Log SOLLOL version at initialization
+        from sollol import __version__
+        logger.info(f"📦 SOLLOL v{__version__} - RayHybridRouter initializing")
+
         # Initialize Ray with dashboard enabled (for Ollama pool parallelization even without RPC)
         if self.enable_distributed:
             if not ray.is_initialized():
@@ -219,6 +223,14 @@ class RayHybridRouter:
                     dashboard_host="0.0.0.0",
                     dashboard_port=8265,
                     include_dashboard=True,
+                    # Aggressive memory limits to prevent OOM kills in CLI apps
+                    object_store_memory=256 * 1024 * 1024,  # 256MB object store (minimal)
+                    _memory=1 * 1024 * 1024 * 1024,  # 1GB total per worker
+                    num_cpus=1,  # Single CPU to minimize workers
+                    _system_config={
+                        "automatic_object_spilling_enabled": True,  # Spill to disk instead of OOM
+                        "max_io_workers": 1,  # Minimal I/O workers
+                    },
                 )
                 logger.info("📊 Ray dashboard available at http://localhost:8265")
 
