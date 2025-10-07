@@ -915,10 +915,11 @@ UNIFIED_DASHBOARD_HTML = """
         .container {
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
-            grid-template-rows: auto auto 1fr;
+            grid-template-rows: auto auto auto 1fr;
             gap: 1rem;
             padding: 1rem;
             height: calc(100vh - 120px);
+            overflow-y: auto;
         }
         .metrics-bar {
             grid-column: 1 / -1;
@@ -976,6 +977,43 @@ UNIFIED_DASHBOARD_HTML = """
         }
         .status-active { background: #10b981; }
         .status-inactive { background: #ef4444; }
+        .node-card, .backend-card {
+            background: #334155;
+            border-radius: 0.4rem;
+            padding: 0.75rem;
+            margin: 0.5rem;
+            border-left: 3px solid #10b981;
+        }
+        .node-card.offline, .backend-card.offline {
+            border-left-color: #ef4444;
+            opacity: 0.6;
+        }
+        .node-url, .backend-url {
+            font-weight: 600;
+            color: #a78bfa;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
+        .node-stats, .backend-stats {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+        .stat-badge {
+            background: #1e293b;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+        .status-healthy { background: #10b981; color: #fff; }
+        .status-offline { background: #ef4444; color: #fff; }
     </style>
 </head>
 <body>
@@ -1008,6 +1046,34 @@ UNIFIED_DASHBOARD_HTML = """
             <div class="metric-card">
                 <div class="metric-value" id="total-pools">--</div>
                 <div class="metric-label">Active Pools</div>
+            </div>
+        </div>
+
+        <!-- Network Nodes (Ollama) -->
+        <div class="dashboard-panel" style="grid-column: span 1;">
+            <div class="panel-header">
+                🖥️ Network Nodes (Ollama)
+            </div>
+            <div class="panel-content">
+                <div id="network-nodes" style="padding: 0.5rem; overflow-y: auto; height: 100%;">
+                    <div style="color: #94a3b8; text-align: center; padding: 2rem;">
+                        Loading nodes...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RPC Backends (llama.cpp) -->
+        <div class="dashboard-panel" style="grid-column: span 1;">
+            <div class="panel-header">
+                🔗 RPC Backends (llama.cpp)
+            </div>
+            <div class="panel-content">
+                <div id="rpc-backends" style="padding: 0.5rem; overflow-y: auto; height: 100%;">
+                    <div style="color: #94a3b8; text-align: center; padding: 2rem;">
+                        Loading backends...
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -1105,6 +1171,60 @@ UNIFIED_DASHBOARD_HTML = """
                 const traces = await tracesRes.json();
                 document.getElementById('traces-json').textContent =
                     JSON.stringify(traces, null, 2);
+
+                // Network Nodes (Ollama)
+                const nodesRes = await fetch('/api/network/nodes');
+                const nodesData = await nodesRes.json();
+                const nodesList = document.getElementById('network-nodes');
+
+                if (nodesData.nodes && nodesData.nodes.length > 0) {
+                    let html = '';
+                    nodesData.nodes.forEach(node => {
+                        const isHealthy = node.status === 'healthy';
+                        const statusClass = isHealthy ? 'status-healthy' : 'status-offline';
+                        const cardClass = isHealthy ? 'node-card' : 'node-card offline';
+
+                        html += `<div class="${cardClass}">`;
+                        html += `  <div class="node-url">${node.url}</div>`;
+                        html += `  <div class="node-stats">`;
+                        html += `    <span class="status-badge ${statusClass}">${node.status}</span>`;
+                        html += `    <span class="stat-badge">⏱️ ${node.latency_ms}ms</span>`;
+                        html += `    <span class="stat-badge">📊 Load: ${node.load_percent}%</span>`;
+                        html += `    <span class="stat-badge">💾 ${node.memory_mb}MB</span>`;
+                        html += `  </div>`;
+                        html += `</div>`;
+                    });
+                    nodesList.innerHTML = html;
+                } else {
+                    nodesList.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">No Ollama nodes discovered</div>';
+                }
+
+                // RPC Backends (llama.cpp)
+                const backendsRes = await fetch('/api/network/backends');
+                const backendsData = await backendsRes.json();
+                const backendsList = document.getElementById('rpc-backends');
+
+                if (backendsData.backends && backendsData.backends.length > 0) {
+                    let html = '';
+                    backendsData.backends.forEach(backend => {
+                        const isHealthy = backend.status === 'healthy';
+                        const statusClass = isHealthy ? 'status-healthy' : 'status-offline';
+                        const cardClass = isHealthy ? 'backend-card' : 'backend-card offline';
+
+                        html += `<div class="${cardClass}">`;
+                        html += `  <div class="backend-url">${backend.url}</div>`;
+                        html += `  <div class="backend-stats">`;
+                        html += `    <span class="status-badge ${statusClass}">${backend.status}</span>`;
+                        html += `    <span class="stat-badge">⏱️ ${backend.latency_ms}ms</span>`;
+                        html += `    <span class="stat-badge">📨 Requests: ${backend.request_count || 0}</span>`;
+                        html += `    <span class="stat-badge">❌ Failures: ${backend.failure_count || 0}</span>`;
+                        html += `  </div>`;
+                        html += `</div>`;
+                    });
+                    backendsList.innerHTML = html;
+                } else {
+                    backendsList.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">No RPC backends discovered</div>';
+                }
 
                 // Applications
                 const appsRes = await fetch('/api/applications');
