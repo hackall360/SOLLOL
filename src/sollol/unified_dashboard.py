@@ -1015,6 +1015,7 @@ UNIFIED_DASHBOARD_HTML = """
             padding: 0.75rem;
             margin: 0.5rem;
             border-left: 3px solid #10b981;
+            min-height: 60px;
         }
         .node-card.offline, .backend-card.offline {
             border-left-color: #ef4444;
@@ -1025,10 +1026,12 @@ UNIFIED_DASHBOARD_HTML = """
             color: #a78bfa;
             font-size: 0.9rem;
             margin-bottom: 0.5rem;
+            word-break: break-all;
         }
         .node-stats, .backend-stats {
             display: flex;
-            gap: 1rem;
+            gap: 0.5rem;
+            flex-wrap: wrap;
             font-size: 0.75rem;
             color: #94a3b8;
         }
@@ -1036,6 +1039,7 @@ UNIFIED_DASHBOARD_HTML = """
             background: #1e293b;
             padding: 0.25rem 0.5rem;
             border-radius: 0.25rem;
+            white-space: nowrap;
         }
         .status-badge {
             display: inline-block;
@@ -1043,9 +1047,29 @@ UNIFIED_DASHBOARD_HTML = """
             border-radius: 0.25rem;
             font-size: 0.7rem;
             font-weight: 600;
+            white-space: nowrap;
         }
         .status-healthy { background: #10b981; color: #fff; }
         .status-offline { background: #ef4444; color: #fff; }
+        .compact-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+        .compact-table th {
+            background: #334155;
+            padding: 0.5rem;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid #667eea;
+        }
+        .compact-table td {
+            padding: 0.5rem;
+            border-bottom: 1px solid #334155;
+        }
+        .compact-table tr:hover {
+            background: #334155;
+        }
     </style>
 </head>
 <body>
@@ -1152,8 +1176,10 @@ UNIFIED_DASHBOARD_HTML = """
                 <span class="status-indicator" id="ray-status"></span>
                 Ray Dashboard
             </div>
-            <div class="panel-content">
-                <iframe src="http://localhost:8265" id="ray-iframe"></iframe>
+            <div class="panel-content" id="ray-content">
+                <div style="color: #94a3b8; text-align: center; padding: 2rem;">
+                    Checking Ray availability...
+                </div>
             </div>
         </div>
 
@@ -1163,8 +1189,10 @@ UNIFIED_DASHBOARD_HTML = """
                 <span class="status-indicator" id="dask-status"></span>
                 Dask Dashboard
             </div>
-            <div class="panel-content">
-                <iframe src="http://localhost:8787" id="dask-iframe"></iframe>
+            <div class="panel-content" id="dask-content">
+                <div style="color: #94a3b8; text-align: center; padding: 2rem;">
+                    Checking Dask availability...
+                </div>
             </div>
         </div>
     </div>
@@ -1204,55 +1232,109 @@ UNIFIED_DASHBOARD_HTML = """
                 document.getElementById('traces-json').textContent =
                     JSON.stringify(traces, null, 2);
 
-                // Network Nodes (Ollama)
+                // Network Nodes (Ollama) - Use table view for >5 nodes
                 const nodesRes = await fetch('/api/network/nodes');
                 const nodesData = await nodesRes.json();
                 const nodesList = document.getElementById('network-nodes');
 
                 if (nodesData.nodes && nodesData.nodes.length > 0) {
+                    const useTable = nodesData.nodes.length > 5;
                     let html = '';
-                    nodesData.nodes.forEach(node => {
-                        const isHealthy = node.status === 'healthy';
-                        const statusClass = isHealthy ? 'status-healthy' : 'status-offline';
-                        const cardClass = isHealthy ? 'node-card' : 'node-card offline';
 
-                        html += `<div class="${cardClass}">`;
-                        html += `  <div class="node-url">${node.url}</div>`;
-                        html += `  <div class="node-stats">`;
-                        html += `    <span class="status-badge ${statusClass}">${node.status}</span>`;
-                        html += `    <span class="stat-badge">⏱️ ${node.latency_ms}ms</span>`;
-                        html += `    <span class="stat-badge">📊 Load: ${node.load_percent}%</span>`;
-                        html += `    <span class="stat-badge">💾 ${node.memory_mb}MB</span>`;
-                        html += `  </div>`;
-                        html += `</div>`;
-                    });
+                    if (useTable) {
+                        // Compact table view for many nodes
+                        html = '<table class="compact-table"><thead><tr>';
+                        html += '<th>Host</th><th>Status</th><th>Latency</th><th>Load</th><th>Memory</th>';
+                        html += '</tr></thead><tbody>';
+
+                        nodesData.nodes.forEach(node => {
+                            const isHealthy = node.status === 'healthy';
+                            const statusClass = isHealthy ? 'status-healthy' : 'status-offline';
+                            const statusIcon = isHealthy ? '✅' : '❌';
+
+                            html += '<tr>';
+                            html += `<td style="color: #a78bfa; font-weight: 600;">${node.url}</td>`;
+                            html += `<td><span class="status-badge ${statusClass}">${statusIcon} ${node.status}</span></td>`;
+                            html += `<td>${node.latency_ms}ms</td>`;
+                            html += `<td>${node.load_percent}%</td>`;
+                            html += `<td>${node.memory_mb}MB</td>`;
+                            html += '</tr>';
+                        });
+
+                        html += '</tbody></table>';
+                    } else {
+                        // Card view for few nodes
+                        nodesData.nodes.forEach(node => {
+                            const isHealthy = node.status === 'healthy';
+                            const statusClass = isHealthy ? 'status-healthy' : 'status-offline';
+                            const cardClass = isHealthy ? 'node-card' : 'node-card offline';
+
+                            html += `<div class="${cardClass}">`;
+                            html += `  <div class="node-url">${node.url}</div>`;
+                            html += `  <div class="node-stats">`;
+                            html += `    <span class="status-badge ${statusClass}">${node.status}</span>`;
+                            html += `    <span class="stat-badge">⏱️ ${node.latency_ms}ms</span>`;
+                            html += `    <span class="stat-badge">📊 Load: ${node.load_percent}%</span>`;
+                            html += `    <span class="stat-badge">💾 ${node.memory_mb}MB</span>`;
+                            html += `  </div>`;
+                            html += `</div>`;
+                        });
+                    }
+
                     nodesList.innerHTML = html;
                 } else {
                     nodesList.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">No Ollama nodes discovered</div>';
                 }
 
-                // RPC Backends (llama.cpp)
+                // RPC Backends (llama.cpp) - Use table view for >5 backends
                 const backendsRes = await fetch('/api/network/backends');
                 const backendsData = await backendsRes.json();
                 const backendsList = document.getElementById('rpc-backends');
 
                 if (backendsData.backends && backendsData.backends.length > 0) {
+                    const useTable = backendsData.backends.length > 5;
                     let html = '';
-                    backendsData.backends.forEach(backend => {
-                        const isHealthy = backend.status === 'healthy';
-                        const statusClass = isHealthy ? 'status-healthy' : 'status-offline';
-                        const cardClass = isHealthy ? 'backend-card' : 'backend-card offline';
 
-                        html += `<div class="${cardClass}">`;
-                        html += `  <div class="backend-url">${backend.url}</div>`;
-                        html += `  <div class="backend-stats">`;
-                        html += `    <span class="status-badge ${statusClass}">${backend.status}</span>`;
-                        html += `    <span class="stat-badge">⏱️ ${backend.latency_ms}ms</span>`;
-                        html += `    <span class="stat-badge">📨 Requests: ${backend.request_count || 0}</span>`;
-                        html += `    <span class="stat-badge">❌ Failures: ${backend.failure_count || 0}</span>`;
-                        html += `  </div>`;
-                        html += `</div>`;
-                    });
+                    if (useTable) {
+                        // Compact table view for many backends
+                        html = '<table class="compact-table"><thead><tr>';
+                        html += '<th>Backend</th><th>Status</th><th>Latency</th><th>Requests</th><th>Failures</th>';
+                        html += '</tr></thead><tbody>';
+
+                        backendsData.backends.forEach(backend => {
+                            const isHealthy = backend.status === 'healthy';
+                            const statusClass = isHealthy ? 'status-healthy' : 'status-offline';
+                            const statusIcon = isHealthy ? '✅' : '❌';
+
+                            html += '<tr>';
+                            html += `<td style="color: #a78bfa; font-weight: 600;">${backend.url}</td>`;
+                            html += `<td><span class="status-badge ${statusClass}">${statusIcon} ${backend.status}</span></td>`;
+                            html += `<td>${backend.latency_ms}ms</td>`;
+                            html += `<td>${backend.request_count || 0}</td>`;
+                            html += `<td style="color: ${backend.failure_count > 0 ? '#ef4444' : '#94a3b8'};">${backend.failure_count || 0}</td>`;
+                            html += '</tr>';
+                        });
+
+                        html += '</tbody></table>';
+                    } else {
+                        // Card view for few backends
+                        backendsData.backends.forEach(backend => {
+                            const isHealthy = backend.status === 'healthy';
+                            const statusClass = isHealthy ? 'status-healthy' : 'status-offline';
+                            const cardClass = isHealthy ? 'backend-card' : 'backend-card offline';
+
+                            html += `<div class="${cardClass}">`;
+                            html += `  <div class="backend-url">${backend.url}</div>`;
+                            html += `  <div class="backend-stats">`;
+                            html += `    <span class="status-badge ${statusClass}">${backend.status}</span>`;
+                            html += `    <span class="stat-badge">⏱️ ${backend.latency_ms}ms</span>`;
+                            html += `    <span class="stat-badge">📨 Requests: ${backend.request_count || 0}</span>`;
+                            html += `    <span class="stat-badge">❌ Failures: ${backend.failure_count || 0}</span>`;
+                            html += `  </div>`;
+                            html += `</div>`;
+                        });
+                    }
+
                     backendsList.innerHTML = html;
                 } else {
                     backendsList.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">No RPC backends discovered</div>';
@@ -1292,22 +1374,42 @@ UNIFIED_DASHBOARD_HTML = """
                     appsList.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">No applications registered yet</div>';
                 }
 
-                // Check Ray status
+                // Check Ray status and load iframe if available
                 try {
-                    const rayRes = await fetch('/api/ray/metrics');
-                    document.getElementById('ray-status').className =
-                        rayRes.ok ? 'status-indicator status-active' : 'status-indicator status-inactive';
+                    const rayRes = await fetch('/api/ray/metrics', {timeout: 1000});
+                    const rayContent = document.getElementById('ray-content');
+
+                    if (rayRes.ok) {
+                        document.getElementById('ray-status').className = 'status-indicator status-active';
+                        if (!rayContent.querySelector('iframe')) {
+                            rayContent.innerHTML = '<iframe src="http://localhost:8265" style="width:100%;height:100%;border:none;"></iframe>';
+                        }
+                    } else {
+                        document.getElementById('ray-status').className = 'status-indicator status-inactive';
+                        rayContent.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">⚠️ Ray not initialized<br><small>Use RayHybridRouter or RayAdvancedRouter to enable</small></div>';
+                    }
                 } catch {
                     document.getElementById('ray-status').className = 'status-indicator status-inactive';
+                    document.getElementById('ray-content').innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">⚠️ Ray not initialized<br><small>Use RayHybridRouter or RayAdvancedRouter to enable</small></div>';
                 }
 
-                // Check Dask status
+                // Check Dask status and load iframe if available
                 try {
-                    const daskRes = await fetch('/api/dask/metrics');
-                    document.getElementById('dask-status').className =
-                        daskRes.ok ? 'status-indicator status-active' : 'status-indicator status-inactive';
+                    const daskRes = await fetch('/api/dask/metrics', {timeout: 1000});
+                    const daskContent = document.getElementById('dask-content');
+
+                    if (daskRes.ok) {
+                        document.getElementById('dask-status').className = 'status-indicator status-active';
+                        if (!daskContent.querySelector('iframe')) {
+                            daskContent.innerHTML = '<iframe src="http://localhost:8787" style="width:100%;height:100%;border:none;"></iframe>';
+                        }
+                    } else {
+                        document.getElementById('dask-status').className = 'status-indicator status-inactive';
+                        daskContent.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">⚠️ Dask not initialized<br><small>Enable with enable_dask=True in UnifiedDashboard</small></div>';
+                    }
                 } catch {
                     document.getElementById('dask-status').className = 'status-indicator status-inactive';
+                    document.getElementById('dask-content').innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">⚠️ Dask not initialized<br><small>Enable with enable_dask=True in UnifiedDashboard</small></div>';
                 }
 
             } catch (error) {
