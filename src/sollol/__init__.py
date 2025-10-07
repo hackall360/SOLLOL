@@ -59,6 +59,10 @@ from sollol.ray_advanced_router import RayAdvancedRouter
 from sollol.llama_cpp_coordinator import LlamaCppCoordinator
 from sollol.llama_cpp_rpc import LlamaCppDistributedCluster, LlamaCppRPCClient
 
+# Monitoring & Dashboards
+from sollol.unified_dashboard import UnifiedDashboard, run_unified_dashboard
+from sollol.distributed_tracing import DistributedTracer, get_tracer
+
 # Distributed execution
 from sollol.execution import AsyncDistributedExecutor, DistributedExecutor
 from sollol.tasks import DistributedTask, ExecutionResult, TaskResult
@@ -84,6 +88,11 @@ __all__ = [
     "LlamaCppRPCClient",
     "LlamaCppDistributedCluster",
     "LlamaCppCoordinator",
+    # Monitoring & Dashboards
+    "UnifiedDashboard",
+    "run_unified_dashboard",
+    "DistributedTracer",
+    "get_tracer",
     # Distributed execution
     "DistributedExecutor",
     "AsyncDistributedExecutor",
