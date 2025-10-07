@@ -146,6 +146,28 @@ class UnifiedDashboard:
 
                 self.dask_client = Client(cluster)
 
+                # Add filter to ALL handlers to block "Task queue depth" warnings
+                # This catches warnings from threaded workers at the handler level
+                class DaskWarningFilter(logging.Filter):
+                    def filter(self, record):
+                        return 'Task queue depth' not in record.getMessage()
+
+                dask_filter = DaskWarningFilter()
+
+                # Apply filter to root logger AND all its handlers
+                logging.root.addFilter(dask_filter)
+                for handler in logging.root.handlers:
+                    handler.addFilter(dask_filter)
+
+                # Apply to all distributed loggers and their handlers
+                for logger_name in ['distributed', 'distributed.worker', 'distributed.scheduler',
+                                   'distributed.core', 'distributed.comm']:
+                    dist_logger = logging.getLogger(logger_name)
+                    dist_logger.addFilter(dask_filter)
+                    dist_logger.setLevel(logging.CRITICAL)
+                    for handler in dist_logger.handlers:
+                        handler.addFilter(dask_filter)
+
                 # Get actual dashboard URL from client (may be on different port if 8787 was taken)
                 if hasattr(self.dask_client, 'dashboard_link'):
                     actual_dashboard_url = self.dask_client.dashboard_link

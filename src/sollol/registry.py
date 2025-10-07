@@ -78,6 +78,48 @@ class NodeRegistry:
             logger.warning(f"Node {url} already exists in registry")
             return self.nodes[url]
 
+        # Check for IP duplicates (localhost, 127.0.0.1, or actual IP)
+        host = url.split("//")[1].split(":")[0]
+        port = url.split(":")[-1]
+
+        try:
+            # Resolve hostname to IP
+            new_ip = socket.gethostbyname(host)
+
+            # Get local IPs for duplicate detection
+            local_ips = {'127.0.0.1', 'localhost'}
+            try:
+                local_hostname = socket.gethostname()
+                local_ips.add(socket.gethostbyname(local_hostname))
+            except:
+                pass
+
+            # Check if this IP already exists in registry
+            for existing_url, existing_node in self.nodes.items():
+                existing_host = existing_url.split("//")[1].split(":")[0]
+                existing_port = existing_url.split(":")[-1]
+
+                # Same port required for duplicate
+                if port != existing_port:
+                    continue
+
+                try:
+                    existing_ip = socket.gethostbyname(existing_host)
+
+                    # Direct IP match
+                    if new_ip == existing_ip:
+                        logger.warning(f"⚠️  Node {url} is a duplicate of {existing_url} (same IP: {new_ip}). Using existing node.")
+                        return existing_node
+
+                    # Both are localhost
+                    if new_ip in local_ips and existing_ip in local_ips:
+                        logger.warning(f"⚠️  Node {url} is a duplicate of {existing_url} (both localhost). Using existing node.")
+                        return existing_node
+                except:
+                    pass
+        except:
+            pass  # If resolution fails, continue with original logic
+
         # Generate name if not provided
         if not name:
             host = url.split("//")[1].split(":")[0]

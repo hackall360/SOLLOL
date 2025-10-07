@@ -218,18 +218,24 @@ class RayHybridRouter:
         if self.enable_distributed:
             if not ray.is_initialized():
                 logger.info("🚀 Initializing Ray for distributed RPC coordination")
+
+                # Set Ray OOM threshold to 95% to prevent premature kills
+                import os
+                os.environ['RAY_memory_usage_threshold'] = '0.95'
+
                 ray.init(
                     ignore_reinit_error=True,
                     dashboard_host="0.0.0.0",
                     dashboard_port=8265,
                     include_dashboard=True,
-                    # Aggressive memory limits to prevent OOM kills in CLI apps
-                    object_store_memory=256 * 1024 * 1024,  # 256MB object store (minimal)
-                    _memory=1 * 1024 * 1024 * 1024,  # 1GB total per worker
+                    # Ultra-minimal memory limits for CLI apps
+                    object_store_memory=128 * 1024 * 1024,  # 128MB object store (ultra-minimal)
+                    _memory=512 * 1024 * 1024,  # 512MB total per worker (reduced from 1GB)
                     num_cpus=1,  # Single CPU to minimize workers
                     _system_config={
                         "automatic_object_spilling_enabled": True,  # Spill to disk instead of OOM
                         "max_io_workers": 1,  # Minimal I/O workers
+                        "object_spilling_threshold": 0.5,  # Spill early at 50%
                     },
                 )
                 logger.info("📊 Ray dashboard available at http://localhost:8265")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sollol"
-version = "0.9.18"
+version = "0.9.19"
 description = "Intelligent Load Balancer for Ollama Clusters - 3 Distribution Modes: Ray Parallel + Dask Batch + llama.cpp Sharding"
 readme = "README.md"
 requires-python = ">=3.8"
