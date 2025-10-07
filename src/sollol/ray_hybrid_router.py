@@ -208,9 +208,9 @@ class RayHybridRouter:
                 logger.info(f"✅ Auto-discovered {len(rpc_backends)} RPC backends")
 
         self.rpc_backends = rpc_backends or []
-        self.enable_distributed = self.enable_distributed and len(self.rpc_backends) > 0
+        self.has_rpc_backends = len(self.rpc_backends) > 0
 
-        # Initialize Ray with dashboard enabled
+        # Initialize Ray with dashboard enabled (for Ollama pool parallelization even without RPC)
         if self.enable_distributed:
             if not ray.is_initialized():
                 logger.info("🚀 Initializing Ray for distributed RPC coordination")
@@ -222,48 +222,57 @@ class RayHybridRouter:
                 )
                 logger.info("📊 Ray dashboard available at http://localhost:8265")
 
-            # Create RPC backend registry
-            self.rpc_registry = RPCBackendRegistry()
-            self.rpc_registry.load_from_config(self.rpc_backends)
+            # Only create RPC pools if we have backends
+            if self.has_rpc_backends:
+                # Create RPC backend registry
+                self.rpc_registry = RPCBackendRegistry()
+                self.rpc_registry.load_from_config(self.rpc_backends)
 
-            # Calculate number of pools
-            if num_pools is None:
-                num_pools = max(1, len(self.rpc_backends) // backends_per_pool)
+                # Calculate number of pools
+                if num_pools is None:
+                    num_pools = max(1, len(self.rpc_backends) // backends_per_pool)
 
-            self.num_pools = num_pools
-            self.pools: List[ray.actor.ActorHandle] = []
-            self.current_model: Optional[str] = None
+                self.num_pools = num_pools
+                self.pools: List[ray.actor.ActorHandle] = []
+                self.current_model: Optional[str] = None
 
-            # Create pools from RPC backends
-            logger.info(
-                f"📦 Creating {num_pools} sharded model pools "
-                f"({backends_per_pool} backends per pool)"
-            )
+                # Create pools from RPC backends
+                logger.info(
+                    f"📦 Creating {num_pools} sharded model pools "
+                    f"({backends_per_pool} backends per pool)"
+                )
 
-            for i in range(num_pools):
-                # Assign backends to this pool (round-robin)
-                pool_backends = [
-                    self.rpc_backends[j]
-                    for j in range(i, len(self.rpc_backends), num_pools)
-                ]
+                for i in range(num_pools):
+                    # Assign backends to this pool (round-robin)
+                    pool_backends = [
+                        self.rpc_backends[j]
+                        for j in range(i, len(self.rpc_backends), num_pools)
+                    ]
 
-                if pool_backends:
-                    pool = ShardedModelPool.remote(
-                        rpc_backends=pool_backends,
-                        coordinator_host=coordinator_host,
-                        coordinator_port=coordinator_base_port,
-                        pool_id=i,
-                    )
-                    self.pools.append(pool)
+                    if pool_backends:
+                        pool = ShardedModelPool.remote(
+                            rpc_backends=pool_backends,
+                            coordinator_host=coordinator_host,
+                            coordinator_port=coordinator_base_port,
+                            pool_id=i,
+                        )
+                        self.pools.append(pool)
                     logger.info(
                         f"  Pool {i}: {len(pool_backends)} backends "
                         f"(port {coordinator_base_port + i})"
                     )
 
-            logger.info(
-                f"✅ RayHybridRouter initialized: "
-                f"{len(self.pools)} pools, {len(self.rpc_backends)} total backends"
-            )
+                logger.info(
+                    f"✅ RayHybridRouter initialized: "
+                    f"{len(self.pools)} RPC pools, {len(self.rpc_backends)} total backends"
+                )
+            else:
+                # No RPC backends - Ray still used for parallel Ollama pool execution
+                self.rpc_registry = None
+                self.num_pools = 0
+                self.pools: List[ray.actor.ActorHandle] = []
+                self.current_model: Optional[str] = None
+                logger.info("✅ RayHybridRouter initialized (Ray enabled for Ollama parallelization, no RPC backends)")
         else:
             logger.info("ℹ️  RayHybridRouter initialized without distributed support")
             self.pools = []

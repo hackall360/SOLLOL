@@ -1430,11 +1430,11 @@ UNIFIED_DASHBOARD_HTML = """
                         }
                     } else {
                         document.getElementById('ray-status').className = 'status-indicator status-inactive';
-                        rayContent.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">⚠️ Ray not initialized<br><small>Use RayHybridRouter or RayAdvancedRouter to enable</small></div>';
+                        rayContent.innerHTML = '<div style="color: #f59e0b; text-align: center; padding: 2rem; background: #1e293b; border-radius: 0.5rem; margin: 1rem;"><div style="font-size: 1.5rem; margin-bottom: 0.5rem;">⚠️</div><div style="font-weight: 600; margin-bottom: 0.5rem;">Ray not initialized</div><small style="color: #94a3b8;">Use RayHybridRouter or RayAdvancedRouter to enable</small></div>';
                     }
                 } catch {
                     document.getElementById('ray-status').className = 'status-indicator status-inactive';
-                    document.getElementById('ray-content').innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">⚠️ Ray not initialized<br><small>Use RayHybridRouter or RayAdvancedRouter to enable</small></div>';
+                    document.getElementById('ray-content').innerHTML = '<div style="color: #f59e0b; text-align: center; padding: 2rem; background: #1e293b; border-radius: 0.5rem; margin: 1rem;"><div style="font-size: 1.5rem; margin-bottom: 0.5rem;">⚠️</div><div style="font-weight: 600; margin-bottom: 0.5rem;">Ray not initialized</div><small style="color: #94a3b8;">Use RayHybridRouter or RayAdvancedRouter to enable</small></div>';
                 }
 
                 // Check Dask status and load iframe if available
@@ -1449,11 +1449,11 @@ UNIFIED_DASHBOARD_HTML = """
                         }
                     } else {
                         document.getElementById('dask-status').className = 'status-indicator status-inactive';
-                        daskContent.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">⚠️ Dask not initialized<br><small>Enable with enable_dask=True in UnifiedDashboard</small></div>';
+                        daskContent.innerHTML = '<div style="color: #f59e0b; text-align: center; padding: 2rem; background: #1e293b; border-radius: 0.5rem; margin: 1rem;"><div style="font-size: 1.5rem; margin-bottom: 0.5rem;">⚠️</div><div style="font-weight: 600; margin-bottom: 0.5rem;">Dask not initialized</div><small style="color: #94a3b8;">Enable with enable_dask=True in UnifiedDashboard</small></div>';
                     }
                 } catch {
                     document.getElementById('dask-status').className = 'status-indicator status-inactive';
-                    document.getElementById('dask-content').innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">⚠️ Dask not initialized<br><small>Enable with enable_dask=True in UnifiedDashboard</small></div>';
+                    document.getElementById('dask-content').innerHTML = '<div style="color: #f59e0b; text-align: center; padding: 2rem; background: #1e293b; border-radius: 0.5rem; margin: 1rem;"><div style="font-size: 1.5rem; margin-bottom: 0.5rem;">⚠️</div><div style="font-weight: 600; margin-bottom: 0.5rem;">Dask not initialized</div><small style="color: #94a3b8;">Enable with enable_dask=True in UnifiedDashboard</small></div>';
                 }
 
             } catch (error) {
