@@ -54,6 +54,8 @@ from sollol.docker_ip_resolver import (
 
 # Distributed inference
 from sollol.hybrid_router import HybridRouter
+from sollol.ray_hybrid_router import RayHybridRouter
+from sollol.ray_advanced_router import RayAdvancedRouter
 from sollol.llama_cpp_coordinator import LlamaCppCoordinator
 from sollol.llama_cpp_rpc import LlamaCppDistributedCluster, LlamaCppRPCClient
 
@@ -77,6 +79,8 @@ __all__ = [
     "SOLLOLClient",
     # Distributed inference
     "HybridRouter",
+    "RayHybridRouter",
+    "RayAdvancedRouter",
     "LlamaCppRPCClient",
     "LlamaCppDistributedCluster",
     "LlamaCppCoordinator",
