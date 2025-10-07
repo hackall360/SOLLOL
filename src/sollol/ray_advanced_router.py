@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import ray
 
 from sollol.llama_cpp_coordinator import LlamaCppCoordinator, RPCBackend
-from sollol.ollama_gguf_resolver import resolve_model_to_gguf
+from sollol.ollama_gguf_resolver import resolve_ollama_model
 from sollol.pool import OllamaPool
 
 logger = logging.getLogger(__name__)
@@ -278,7 +278,7 @@ class RayAdvancedRouter:
 
             for model in warm_models:
                 logger.info(f"🔥 Pre-loading warm pools for {model}...")
-                gguf_path = resolve_model_to_gguf(model)
+                gguf_path = resolve_ollama_model(model)
 
                 if not gguf_path:
                     logger.warning(f"⚠️  Could not resolve {model} to GGUF, skipping")
@@ -438,7 +438,7 @@ class RayAdvancedRouter:
             logger.info(f"ℹ️  Warm pools already exist for {model}")
             return
 
-        gguf_path = resolve_model_to_gguf(model)
+        gguf_path = resolve_ollama_model(model)
         if not gguf_path:
             raise ValueError(f"Could not resolve {model} to GGUF")
 

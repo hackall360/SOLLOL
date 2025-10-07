@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 import ray
 
 from sollol.llama_cpp_coordinator import LlamaCppCoordinator, RPCBackend
-from sollol.ollama_gguf_resolver import resolve_model_to_gguf
+from sollol.ollama_gguf_resolver import resolve_ollama_model
 from sollol.pool import OllamaPool
 from sollol.rpc_registry import RPCBackendRegistry
 
@@ -325,7 +325,7 @@ class RayHybridRouter:
         """
         # Load model into all pools if not already loaded
         if self.current_model != model:
-            gguf_path = resolve_model_to_gguf(model)
+            gguf_path = resolve_ollama_model(model)
             if not gguf_path:
                 raise ValueError(f"Could not resolve {model} to GGUF file")
 
