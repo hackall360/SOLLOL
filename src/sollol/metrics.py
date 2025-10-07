@@ -8,30 +8,49 @@ from datetime import datetime
 from functools import wraps
 from typing import Callable, Dict
 
-from prometheus_client import Counter, Gauge, Histogram, start_http_server
+from prometheus_client import Counter, Gauge, Histogram, start_http_server, REGISTRY
 
 from sollol.memory import update_host_metrics
 
-# Prometheus metrics
-REQUEST_COUNT = Counter(
-    "sollol_requests_total", "Total number of requests processed", ["endpoint", "status"]
-)
+# Prometheus metrics - use try/except to handle duplicate registration gracefully
+try:
+    REQUEST_COUNT = Counter(
+        "sollol_requests_total", "Total number of requests processed", ["endpoint", "status"]
+    )
+except ValueError:
+    # Metric already registered (happens with Ray workers or pytest)
+    REQUEST_COUNT = REGISTRY._names_to_collectors.get("sollol_requests_total")
 
-REQUEST_LATENCY = Histogram(
-    "sollol_request_latency_seconds", "Request latency in seconds", ["endpoint"]
-)
+try:
+    REQUEST_LATENCY = Histogram(
+        "sollol_request_latency_seconds", "Request latency in seconds", ["endpoint"]
+    )
+except ValueError:
+    REQUEST_LATENCY = REGISTRY._names_to_collectors.get("sollol_request_latency_seconds")
 
-WORKER_FAILURES = Counter(
-    "sollol_worker_failures_total", "Total number of worker failures", ["host"]
-)
+try:
+    WORKER_FAILURES = Counter(
+        "sollol_worker_failures_total", "Total number of worker failures", ["host"]
+    )
+except ValueError:
+    WORKER_FAILURES = REGISTRY._names_to_collectors.get("sollol_worker_failures_total")
 
-ACTIVE_REQUESTS = Gauge("sollol_active_requests", "Number of requests currently being processed")
+try:
+    ACTIVE_REQUESTS = Gauge("sollol_active_requests", "Number of requests currently being processed")
+except ValueError:
+    ACTIVE_REQUESTS = REGISTRY._names_to_collectors.get("sollol_active_requests")
 
-HOST_LATENCY = Gauge("sollol_host_latency_ms", "Average latency per host in milliseconds", ["host"])
+try:
+    HOST_LATENCY = Gauge("sollol_host_latency_ms", "Average latency per host in milliseconds", ["host"])
+except ValueError:
+    HOST_LATENCY = REGISTRY._names_to_collectors.get("sollol_host_latency_ms")
 
-HOST_SUCCESS_RATE = Gauge(
-    "sollol_host_success_rate", "Success rate per host (0.0 to 1.0)", ["host"]
-)
+try:
+    HOST_SUCCESS_RATE = Gauge(
+        "sollol_host_success_rate", "Success rate per host (0.0 to 1.0)", ["host"]
+    )
+except ValueError:
+    HOST_SUCCESS_RATE = REGISTRY._names_to_collectors.get("sollol_host_success_rate")
 
 # In-memory metrics for routing decisions
 _host_stats: Dict[str, Dict] = {}

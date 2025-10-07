@@ -264,10 +264,16 @@ class RayAdvancedRouter:
 
         self.rpc_backends = rpc_backends or []
 
-        # Initialize Ray
+        # Initialize Ray with dashboard enabled
         if not ray.is_initialized():
             logger.info("🚀 Initializing Ray for advanced distributed routing")
-            ray.init(ignore_reinit_error=True)
+            ray.init(
+                ignore_reinit_error=True,
+                dashboard_host="0.0.0.0",
+                dashboard_port=8265,
+                include_dashboard=True,
+            )
+            logger.info("📊 Ray dashboard available at http://localhost:8265")
 
         # Warm pool registry: model -> list of pools
         self.warm_pools: Dict[str, List[ray.actor.ActorHandle]] = defaultdict(list)

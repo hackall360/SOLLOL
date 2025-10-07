@@ -210,11 +210,17 @@ class RayHybridRouter:
         self.rpc_backends = rpc_backends or []
         self.enable_distributed = self.enable_distributed and len(self.rpc_backends) > 0
 
-        # Initialize Ray
+        # Initialize Ray with dashboard enabled
         if self.enable_distributed:
             if not ray.is_initialized():
                 logger.info("🚀 Initializing Ray for distributed RPC coordination")
-                ray.init(ignore_reinit_error=True)
+                ray.init(
+                    ignore_reinit_error=True,
+                    dashboard_host="0.0.0.0",
+                    dashboard_port=8265,
+                    include_dashboard=True,
+                )
+                logger.info("📊 Ray dashboard available at http://localhost:8265")
 
             # Create RPC backend registry
             self.rpc_registry = RPCBackendRegistry()
