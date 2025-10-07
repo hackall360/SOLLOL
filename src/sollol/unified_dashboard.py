@@ -867,13 +867,21 @@ class UnifiedDashboard:
         request_duration.labels(model=model, backend=backend).observe(latency_ms / 1000)
 
     def run(self, host: str = "0.0.0.0", debug: bool = False):
-        """Run dashboard server."""
+        """Run dashboard server (production-ready with Waitress)."""
         logger.info(f"🚀 Starting Unified Dashboard on http://{host}:{self.dashboard_port}")
         logger.info(f"   Ray Dashboard: http://localhost:{self.ray_dashboard_port}")
         logger.info(f"   Dask Dashboard: http://localhost:{self.dask_dashboard_port}")
         logger.info(f"   Prometheus: http://{host}:{self.dashboard_port}/api/prometheus")
 
-        self.app.run(host=host, port=self.dashboard_port, debug=debug)
+        if debug:
+            # Development mode - use Flask's dev server
+            logger.warning("⚠️  Running in DEBUG mode - not for production!")
+            self.app.run(host=host, port=self.dashboard_port, debug=True)
+        else:
+            # Production mode - use Waitress
+            from waitress import serve
+            logger.info("✅ Using Waitress production server")
+            serve(self.app, host=host, port=self.dashboard_port, threads=4)
 
 
 # Unified Dashboard HTML Template
