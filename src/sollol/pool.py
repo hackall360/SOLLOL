@@ -44,6 +44,7 @@ class OllamaPool:
         nodes: Optional[List[Dict[str, str]]] = None,
         enable_intelligent_routing: bool = True,
         exclude_localhost: bool = False,
+        discover_all_nodes: bool = False,
     ):
         """
         Initialize connection pool with full observability.
@@ -52,9 +53,11 @@ class OllamaPool:
             nodes: List of node dicts. If None, auto-discovers.
             enable_intelligent_routing: Use intelligent routing (default: True)
             exclude_localhost: Skip localhost during discovery (for SOLLOL gateway)
+            discover_all_nodes: Scan full network for ALL nodes (slower but comprehensive)
         """
         self.nodes = nodes or []
         self.exclude_localhost = exclude_localhost
+        self.discover_all_nodes = discover_all_nodes
         self._lock = threading.Lock()
         self._current_index = 0
 
@@ -101,25 +104,34 @@ class OllamaPool:
         )
 
     @classmethod
-    def auto_configure(cls) -> "OllamaPool":
+    def auto_configure(cls, discover_all_nodes: bool = False) -> "OllamaPool":
         """
         Create pool with automatic discovery.
+
+        Args:
+            discover_all_nodes: If True, scan full network for ALL nodes (default: False for speed)
 
         Returns:
             OllamaPool instance ready to use
         """
-        return cls(nodes=None)
+        return cls(nodes=None, discover_all_nodes=discover_all_nodes)
 
     def _auto_discover(self):
         """Discover Ollama nodes automatically."""
         from .discovery import discover_ollama_nodes
 
-        if self.exclude_localhost:
+        if self.discover_all_nodes:
+            logger.info("Auto-discovering ALL Ollama nodes on network (full subnet scan)...")
+        elif self.exclude_localhost:
             logger.debug("Auto-discovering Ollama nodes (excluding localhost)...")
         else:
             logger.debug("Auto-discovering Ollama nodes...")
 
-        nodes = discover_ollama_nodes(timeout=0.5, exclude_localhost=self.exclude_localhost)
+        nodes = discover_ollama_nodes(
+            timeout=0.5,
+            exclude_localhost=self.exclude_localhost,
+            discover_all_nodes=self.discover_all_nodes
+        )
 
         with self._lock:
             self.nodes = nodes

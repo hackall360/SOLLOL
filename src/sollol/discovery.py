@@ -24,16 +24,19 @@ logger = logging.getLogger(__name__)
 
 
 def discover_ollama_nodes(
-    timeout: float = 0.5, exclude_localhost: bool = False, auto_resolve_docker: bool = True
+    timeout: float = 0.5,
+    exclude_localhost: bool = False,
+    auto_resolve_docker: bool = True,
+    discover_all_nodes: bool = False
 ) -> List[Dict[str, str]]:
     """
     Discover Ollama nodes using multiple strategies.
-    Returns in under 1 second.
 
     Args:
         timeout: Connection timeout per node
         exclude_localhost: If True, skip localhost (useful when SOLLOL runs on 11434)
         auto_resolve_docker: If True, automatically resolve Docker IPs to accessible IPs
+        discover_all_nodes: If True, scan full network and return ALL nodes (slower but comprehensive)
 
     Returns:
         List of node dicts: [{"host": "192.168.1.10", "port": "11434"}, ...]
@@ -42,7 +45,25 @@ def discover_ollama_nodes(
         - Multi-strategy discovery (env → known → network scan)
         - Automatic Docker IP resolution (172.17.x.x → localhost)
         - Fast parallel network scanning
+        - Full network scan mode for comprehensive discovery
     """
+    # If full network scan requested, skip fast strategies and scan entire subnet
+    if discover_all_nodes:
+        logger.info("Full network discovery mode - scanning entire subnet for all Ollama nodes")
+        nodes = _from_network_scan(timeout, exclude_localhost)
+
+        if auto_resolve_docker:
+            nodes = auto_resolve_ips(nodes, timeout, _is_ollama_running)
+
+        if nodes:
+            return nodes
+        elif not exclude_localhost:
+            logger.debug("No nodes discovered on network, falling back to localhost")
+            return [{"host": "localhost", "port": "11434"}]
+        else:
+            return []
+
+    # Fast discovery mode (original behavior)
     strategies = [
         lambda t: _from_environment(t, exclude_localhost),
         lambda t: _from_known_locations(t, exclude_localhost),
@@ -105,7 +126,7 @@ def _from_network_scan(timeout: float, exclude_localhost: bool = False) -> List[
     """
     Fast parallel network scan of local subnet.
 
-    Only scans if no nodes found yet (last resort).
+    Scans the FULL subnet and returns ALL discovered nodes.
     """
     try:
         subnet = _get_local_subnet()
@@ -117,35 +138,29 @@ def _from_network_scan(timeout: float, exclude_localhost: bool = False) -> List[
         # Skip localhost IPs if excluded
         if exclude_localhost and ip in ("127.0.0.1", f"{subnet}.1"):
             return None
-        if _is_port_open(ip, 11434, timeout / 254):
+        # Use reasonable timeout for port check (0.1s min to allow TCP handshake)
+        port_timeout = max(0.1, timeout / 5)  # At least 100ms for TCP connection
+        if _is_port_open(ip, 11434, port_timeout):
             if _is_ollama_running(ip, 11434, timeout):
                 return {"host": ip, "port": "11434"}
         return None
 
-    # Scan common IPs first (faster)
-    priority_ips = [f"{subnet}.{i}" for i in [1, 2, 10, 100, 254]]
+    # Scan all IPs in subnet (1-254)
+    all_ips = [f"{subnet}.{i}" for i in range(1, 255)]
+    discovered_nodes = []
 
-    # Check priority IPs first
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        for result in executor.map(check_host, priority_ips):
-            if result:
-                return [result]  # Found one, that's enough
-
-    # If still nothing, scan full subnet (slower)
-    all_ips = [f"{subnet}.{i}" for i in range(1, 255) if f"{subnet}.{i}" not in priority_ips]
-
+    # Parallel scan with 100 workers for speed
     with ThreadPoolExecutor(max_workers=100) as executor:
         futures = {executor.submit(check_host, ip): ip for ip in all_ips}
 
         for future in as_completed(futures):
             result = future.result()
             if result:
-                # Cancel remaining futures
-                for f in futures:
-                    f.cancel()
-                return [result]
+                discovered_nodes.append(result)
+                logger.info(f"Discovered Ollama node: {result['host']}:{result['port']}")
 
-    return []
+    logger.info(f"Network scan complete: found {len(discovered_nodes)} nodes on {subnet}.0/24")
+    return discovered_nodes
 
 
 def _is_port_open(host: str, port: int, timeout: float) -> bool:
