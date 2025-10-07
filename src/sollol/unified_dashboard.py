@@ -132,21 +132,19 @@ class UnifiedDashboard:
                 dask.config.set({"logging.distributed": "error"})
                 dask.config.set({"distributed.admin.tick.interval": "500ms"})
 
-                # Create cluster with minimal workers
+                # Use threads instead of processes so we can control logging
+                # This keeps workers in the same process where logging suppression works
                 cluster = LocalCluster(
                     n_workers=1,
                     threads_per_worker=2,
+                    processes=False,  # Use threads, not separate processes
                     dashboard_address=f":{dask_dashboard_port}",
+                    silence_logs=logging.CRITICAL,
                 )
 
-                self.dask_client = Client(cluster)
+                logger.info("📊 Dask cluster using threaded workers (shared logging context)")
 
-                # Apply logging suppression to all distributed loggers after client creation
-                logging.getLogger('distributed').setLevel(logging.ERROR)
-                logging.getLogger('distributed.worker').setLevel(logging.ERROR)
-                logging.getLogger('distributed.scheduler').setLevel(logging.ERROR)
-                logging.getLogger('distributed.nanny').setLevel(logging.ERROR)
-                logging.getLogger('distributed.core').setLevel(logging.ERROR)
+                self.dask_client = Client(cluster)
 
                 # Get actual dashboard URL from client (may be on different port if 8787 was taken)
                 if hasattr(self.dask_client, 'dashboard_link'):
