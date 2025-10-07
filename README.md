@@ -351,6 +351,85 @@ print(response['message']['content'])
 4. Distributes model layers across backends
 5. Routes your request to the coordinator
 
+#### RPC Server Auto-Installation
+
+**SOLLOL can automatically clone, build, and start llama.cpp RPC servers for you!**
+
+**One-line installation:**
+
+```python
+from sollol.rpc_auto_setup import auto_setup_rpc_backends
+
+# Automatically: clone → build → start RPC servers
+backends = auto_setup_rpc_backends(num_backends=2)
+# Output: [{'host': '127.0.0.1', 'port': 50052}, {'host': '127.0.0.1', 'port': 50053}]
+```
+
+**What this does:**
+1. ✅ Scans network for existing RPC servers
+2. ✅ If none found: clones llama.cpp to `~/llama.cpp`
+3. ✅ Builds llama.cpp with RPC support (`cmake -DGGML_RPC=ON`)
+4. ✅ Starts RPC servers on ports 50052-50053
+5. ✅ Returns ready-to-use backend list
+
+**CLI installation:**
+
+```bash
+# Full automated setup (clone + build + install systemd service)
+python3 -m sollol.setup_llama_cpp --all
+
+# Or step by step
+python3 -m sollol.setup_llama_cpp --clone  # Clone llama.cpp
+python3 -m sollol.setup_llama_cpp --build  # Build with RPC support
+python3 -m sollol.setup_llama_cpp --start  # Start RPC server
+```
+
+**Docker IP Resolution:**
+
+SOLLOL automatically resolves Docker container IPs to accessible host IPs:
+
+```python
+# If Docker container reports IP 172.17.0.5:11434
+# SOLLOL automatically resolves to:
+# → 127.0.0.1:11434 (published port mapping)
+# → host IP (if accessible)
+# → Docker host gateway
+
+from sollol import is_docker_ip, resolve_docker_ip
+
+# Check if IP is Docker internal
+is_docker = is_docker_ip("172.17.0.5")  # True
+
+# Resolve Docker IP to accessible IP
+accessible_ip = resolve_docker_ip("172.17.0.5", port=11434)
+# Returns: "127.0.0.1" or host IP
+```
+
+**Network Discovery with Docker Support:**
+
+```python
+from sollol import OllamaPool
+
+# Auto-discover nodes (automatically resolves Docker IPs)
+pool = OllamaPool.auto_configure()
+
+# Manual control
+from sollol.discovery import discover_ollama_nodes
+nodes = discover_ollama_nodes(auto_resolve_docker=True)
+```
+
+**Multi-Node Production Setup:**
+
+For distributed clusters, use systemd services on each node:
+
+```bash
+# On each RPC node
+sudo systemctl enable llama-rpc@50052.service
+sudo systemctl start llama-rpc@50052.service
+```
+
+See [SOLLOL_RPC_SETUP.md](https://github.com/BenevolentJoker-JohnL/FlockParser/blob/main/SOLLOL_RPC_SETUP.md) for complete installation guide.
+
 #### Architecture: How It Works
 
 ```

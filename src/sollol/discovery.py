@@ -5,6 +5,11 @@ Tries multiple strategies in order:
 1. Environment variable (instant)
 2. Known locations (instant)
 3. Network scan (parallel, ~500ms)
+
+Features:
+- Automatic Docker IP resolution (172.17.x.x → localhost)
+- Multi-strategy fallback
+- Fast parallel scanning
 """
 
 import logging
@@ -13,11 +18,13 @@ import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
+from sollol.docker_ip_resolver import auto_resolve_ips, is_docker_ip
+
 logger = logging.getLogger(__name__)
 
 
 def discover_ollama_nodes(
-    timeout: float = 0.5, exclude_localhost: bool = False
+    timeout: float = 0.5, exclude_localhost: bool = False, auto_resolve_docker: bool = True
 ) -> List[Dict[str, str]]:
     """
     Discover Ollama nodes using multiple strategies.
@@ -26,9 +33,15 @@ def discover_ollama_nodes(
     Args:
         timeout: Connection timeout per node
         exclude_localhost: If True, skip localhost (useful when SOLLOL runs on 11434)
+        auto_resolve_docker: If True, automatically resolve Docker IPs to accessible IPs
 
     Returns:
         List of node dicts: [{"host": "192.168.1.10", "port": "11434"}, ...]
+
+    Features:
+        - Multi-strategy discovery (env → known → network scan)
+        - Automatic Docker IP resolution (172.17.x.x → localhost)
+        - Fast parallel network scanning
     """
     strategies = [
         lambda t: _from_environment(t, exclude_localhost),
@@ -40,6 +53,11 @@ def discover_ollama_nodes(
         nodes = strategy(timeout)
         if nodes:
             logger.debug(f"Discovered {len(nodes)} nodes via {strategy.__name__}")
+
+            # Auto-resolve Docker IPs if enabled
+            if auto_resolve_docker:
+                nodes = auto_resolve_ips(nodes, timeout, _is_ollama_running)
+
             return nodes
 
     # Fallback: only use localhost if not excluded

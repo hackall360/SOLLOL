@@ -41,6 +41,17 @@ from sollol.config import SOLLOLConfig
 # Discovery
 from sollol.discovery import discover_ollama_nodes
 
+# Docker IP Resolution
+from sollol.docker_ip_resolver import (
+    auto_resolve_ips,
+    get_deployment_context,
+    get_docker_network_mode,
+    is_docker_ip,
+    is_running_in_docker,
+    resolve_docker_ip,
+    resolve_docker_ip_with_alternatives,
+)
+
 # Distributed inference
 from sollol.hybrid_router import HybridRouter
 from sollol.llama_cpp_coordinator import LlamaCppCoordinator
@@ -59,7 +70,7 @@ from sollol.rpc_registry import RPCBackendRegistry
 # Legacy support
 from sollol.sollol import SOLLOL
 
-__version__ = "0.3.6"
+__version__ = "0.7.1"
 __all__ = [
     # Core
     "OllamaPool",
@@ -82,6 +93,14 @@ __all__ = [
     "check_rpc_server",
     "RPCAutoSetup",
     "RPCBackendRegistry",
+    # Docker IP Resolution
+    "is_docker_ip",
+    "resolve_docker_ip",
+    "resolve_docker_ip_with_alternatives",
+    "auto_resolve_ips",
+    "is_running_in_docker",
+    "get_docker_network_mode",
+    "get_deployment_context",
     # Legacy
     "SOLLOL",
     "SOLLOLConfig",

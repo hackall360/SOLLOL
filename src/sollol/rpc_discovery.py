@@ -3,6 +3,11 @@ RPC Backend Discovery - Auto-detect llama.cpp RPC servers on the network
 
 Similar to Ollama discovery, this module scans the network for running
 RPC servers (default port: 50052).
+
+Features:
+- Automatic Docker IP resolution (172.17.x.x → localhost)
+- Multi-threaded network scanning
+- Health checking
 """
 
 import asyncio
@@ -12,6 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List
 
 import httpx
+
+from sollol.docker_ip_resolver import auto_resolve_ips, is_docker_ip
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +46,7 @@ def check_rpc_server(host: str, port: int = 50052, timeout: float = 1.0) -> bool
 
 
 def discover_rpc_backends(
-    cidr: str = None, port: int = 50052, timeout: float = 1.0
+    cidr: str = None, port: int = 50052, timeout: float = 1.0, auto_resolve_docker: bool = True
 ) -> List[Dict[str, Any]]:
     """
     Discover RPC backends on the network.
@@ -48,9 +55,15 @@ def discover_rpc_backends(
         cidr: Network CIDR (e.g., "192.168.1.0/24"). Auto-detects if None.
         port: RPC port to scan (default: 50052)
         timeout: Connection timeout per host
+        auto_resolve_docker: If True, automatically resolve Docker IPs to accessible IPs
 
     Returns:
         List of discovered backends: [{"host": "ip", "port": 50052}, ...]
+
+    Features:
+        - Parallel network scanning
+        - Automatic Docker IP resolution (172.17.x.x → localhost)
+        - CIDR auto-detection
     """
     backends = []
 
@@ -87,6 +100,11 @@ def discover_rpc_backends(
                     backends.append({"host": ip, "port": port})
             except Exception as e:
                 logger.debug(f"Error checking {ip}: {e}")
+
+    # Auto-resolve Docker IPs if enabled
+    if auto_resolve_docker and backends:
+        logger.debug("Checking for Docker IPs...")
+        backends = auto_resolve_ips(backends, timeout, verify_func=check_rpc_server)
 
     logger.info(f"✅ Discovered {len(backends)} RPC backends")
     return backends
@@ -130,17 +148,23 @@ def _cidr_to_ips(cidr: str) -> List[str]:
 
 
 # Convenience function
-def auto_discover_rpc_backends(port: int = 50052) -> List[Dict[str, Any]]:
+def auto_discover_rpc_backends(port: int = 50052, auto_resolve_docker: bool = True) -> List[Dict[str, Any]]:
     """
     Auto-discover RPC backends on the local network.
 
     Args:
         port: RPC port to scan (default: 50052)
+        auto_resolve_docker: If True, automatically resolve Docker IPs
 
     Returns:
         List of discovered backends
+
+    Features:
+        - Automatic CIDR detection
+        - Docker IP resolution
+        - Fast parallel scanning
     """
-    return discover_rpc_backends(port=port)
+    return discover_rpc_backends(port=port, auto_resolve_docker=auto_resolve_docker)
 
 
 if __name__ == "__main__":

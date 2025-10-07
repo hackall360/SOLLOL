@@ -63,8 +63,13 @@ class VRAMMonitor:
         return None
 
     def _get_nvidia_vram(self) -> Optional[Dict]:
-        """Get NVIDIA GPU VRAM information using nvidia-smi."""
+        """Get NVIDIA GPU VRAM information using nvidia-smi.
+
+        Supports modern GPUs (Kepler and newer, 2012+) with full query support.
+        Falls back to basic detection for older GPUs with limited nvidia-smi support.
+        """
         try:
+            # Try modern nvidia-smi query (Kepler GTX 600 series and newer)
             cmd = [
                 "nvidia-smi",
                 "--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu",
@@ -73,7 +78,8 @@ class VRAMMonitor:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
 
             if result.returncode != 0:
-                return None
+                # Fallback: Try basic nvidia-smi for older GPUs
+                return self._get_nvidia_vram_fallback()
 
             gpus = []
             for line in result.stdout.strip().split("\n"):
@@ -97,6 +103,10 @@ class VRAMMonitor:
                         }
                     )
 
+            if not gpus:
+                # No GPUs parsed, try fallback
+                return self._get_nvidia_vram_fallback()
+
             return {
                 "vendor": "NVIDIA",
                 "gpus": gpus,
@@ -104,6 +114,148 @@ class VRAMMonitor:
                 "used_vram_mb": sum(g["used_mb"] for g in gpus),
                 "free_vram_mb": sum(g["free_mb"] for g in gpus),
             }
+
+        except Exception:
+            # Last resort: Try fallback
+            return self._get_nvidia_vram_fallback()
+
+    def _get_nvidia_vram_fallback(self) -> Optional[Dict]:
+        """Fallback VRAM detection for older NVIDIA GPUs.
+
+        For GPUs that don't support --query-gpu (pre-Kepler, before 2012):
+        - Try basic nvidia-smi output parsing
+        - Use lspci for GPU detection
+        - Return minimal info (GPU detected but VRAM unknown)
+
+        This allows routing to still work, but with conservative estimates.
+        """
+        try:
+            # Try basic nvidia-smi (no --query-gpu)
+            result = subprocess.run(
+                ["nvidia-smi"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            if result.returncode != 0:
+                # Try lspci as last resort
+                return self._get_nvidia_vram_lspci()
+
+            # Parse basic nvidia-smi output
+            gpus = []
+            gpu_index = 0
+
+            for line in result.stdout.split("\n"):
+                # Look for GPU lines (usually contain "GeForce", "Quadro", "Tesla", etc.)
+                if any(x in line for x in ["GeForce", "Quadro", "Tesla", "RTX", "GTX"]):
+                    # Try to extract GPU name
+                    gpu_name = "NVIDIA GPU"
+                    for brand in ["GeForce", "Quadro", "Tesla", "RTX", "GTX"]:
+                        if brand in line:
+                            # Extract name after brand
+                            idx = line.find(brand)
+                            gpu_name = line[idx:].split()[0:3]  # Take first few words
+                            gpu_name = " ".join(gpu_name).strip()
+                            break
+
+                    # For older GPUs, we can't query VRAM accurately
+                    # Set to 0 to indicate "unknown" - routing will use CPU mode or remote query
+                    gpus.append(
+                        {
+                            "index": gpu_index,
+                            "name": gpu_name,
+                            "total_mb": 0,  # Unknown
+                            "used_mb": 0,   # Unknown
+                            "free_mb": 0,   # Unknown - triggers fallback routing
+                            "utilization_percent": None,
+                            "temperature_c": None,
+                            "vendor": "NVIDIA",
+                            "legacy": True,  # Mark as legacy GPU
+                        }
+                    )
+                    gpu_index += 1
+
+            if gpus:
+                return {
+                    "vendor": "NVIDIA",
+                    "gpus": gpus,
+                    "total_vram_mb": 0,  # Unknown
+                    "used_vram_mb": 0,
+                    "free_vram_mb": 0,   # Routing will handle gracefully
+                    "legacy_gpu": True,  # Flag for logging/debugging
+                }
+
+            # Last resort: lspci
+            return self._get_nvidia_vram_lspci()
+
+        except Exception:
+            return self._get_nvidia_vram_lspci()
+
+    def _get_nvidia_vram_lspci(self) -> Optional[Dict]:
+        """Detect NVIDIA GPU via lspci (absolute last resort).
+
+        For systems where nvidia-smi is completely unavailable or broken.
+        Only detects GPU presence, no VRAM info.
+        """
+        try:
+            result = subprocess.run(
+                ["lspci"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            if result.returncode != 0:
+                return None
+
+            gpus = []
+            gpu_index = 0
+
+            for line in result.stdout.split("\n"):
+                # Look for NVIDIA VGA or 3D controller
+                if "NVIDIA" in line and ("VGA" in line or "3D controller" in line):
+                    # Extract GPU name from lspci output
+                    # Format: "01:00.0 VGA compatible controller: NVIDIA Corporation ..."
+                    if ":" in line:
+                        parts = line.split(":", 2)
+                        if len(parts) >= 3:
+                            gpu_name = parts[2].strip()
+                            # Remove "NVIDIA Corporation" prefix
+                            gpu_name = gpu_name.replace("NVIDIA Corporation", "").strip()
+                        else:
+                            gpu_name = "NVIDIA GPU (detected via lspci)"
+                    else:
+                        gpu_name = "NVIDIA GPU"
+
+                    gpus.append(
+                        {
+                            "index": gpu_index,
+                            "name": gpu_name,
+                            "total_mb": 0,
+                            "used_mb": 0,
+                            "free_mb": 0,
+                            "utilization_percent": None,
+                            "temperature_c": None,
+                            "vendor": "NVIDIA",
+                            "legacy": True,
+                            "lspci_only": True,  # Detected via lspci, no driver access
+                        }
+                    )
+                    gpu_index += 1
+
+            if gpus:
+                return {
+                    "vendor": "NVIDIA",
+                    "gpus": gpus,
+                    "total_vram_mb": 0,
+                    "used_vram_mb": 0,
+                    "free_vram_mb": 0,
+                    "legacy_gpu": True,
+                    "lspci_detection": True,
+                }
+
+            return None
 
         except Exception:
             return None

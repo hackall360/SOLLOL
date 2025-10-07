@@ -207,6 +207,10 @@ class IntelligentRouter:
         3. Makes routing decision with global state
         4. Immediately updates global active request count
 
+        GPU Overload Handling:
+        - If all GPUs have low VRAM (<2000 MB), enables CPU fallback
+        - Allows CPU-only nodes to compete when GPUs are overwhelmed
+
         Args:
             context: Task context from analyze_request()
             available_hosts: List of available host metadata
@@ -219,6 +223,30 @@ class IntelligentRouter:
 
         if not available:
             raise ValueError("No available hosts")
+
+        # GPU Overload Detection: Check if all GPUs are overwhelmed
+        if context.requires_gpu:
+            gpu_hosts = [h for h in available if h.get("gpu_free_mem", 0) > 0]
+            all_gpus_overwhelmed = all(
+                h.get("gpu_free_mem", 0) < 2000 for h in gpu_hosts
+            ) if gpu_hosts else True
+
+            if all_gpus_overwhelmed:
+                # All GPUs overwhelmed - enable CPU fallback
+                logger.warning(
+                    f"All GPUs overwhelmed (VRAM < 2000 MB) - enabling CPU fallback for {context.task_type}"
+                )
+                # Modify context to allow CPU fallback
+                context = TaskContext(
+                    task_type=context.task_type,
+                    complexity=context.complexity,
+                    estimated_tokens=context.estimated_tokens,
+                    model_preference=context.model_preference,
+                    priority=context.priority,
+                    requires_gpu=False,  # ← Enable CPU fallback
+                    estimated_duration_ms=context.estimated_duration_ms,
+                    metadata={**context.metadata, "gpu_fallback_to_cpu": True},
+                )
 
         # If distributed coordination enabled, use it
         if self.coordinator:
@@ -317,58 +345,121 @@ class IntelligentRouter:
             return 0.0
 
         # Factor 2: Resource adequacy (CRITICAL for resource-intensive tasks)
-        # GPU requirements
+        # GPU requirements - balanced to use ALL hardware based on capacity
         if context.requires_gpu:
             gpu_mem = host_meta.get("gpu_free_mem", 0)
+            active_requests = host_meta.get("active_requests", 0)
+
             if gpu_mem == 0:
                 # No GPU but task needs it - heavy penalty
                 score *= 0.2  # Still possible but very low priority
             elif gpu_mem < 2000:
-                # Low GPU memory - risky
-                score *= 0.5
-            elif gpu_mem > 4000:
-                # Good GPU availability - bonus!
-                score *= 1.5
+                # Low VRAM GPU (1050Ti, etc.) - SHOULD BE USED for overflow when others loaded
+                # Light penalty - will get used when high-VRAM GPUs saturate
+                # VRAM-aware active_requests penalty (50% per request) prevents overload
+                base_penalty = 0.90  # Only 10% penalty (lets it compete)
+
+                # If this low-VRAM GPU is idle, it can take overflow
+                # If it already has requests, penalize more to avoid overloading small GPU
+                if active_requests == 0:
+                    # Idle low-VRAM GPU - apply base penalty
+                    score *= base_penalty
+                else:
+                    # Low-VRAM GPU already has requests - penalize more to avoid OOM
+                    score *= base_penalty * 0.6  # Additional 40% penalty when loaded
             elif gpu_mem > 8000:
-                # Excellent GPU availability - big bonus!
+                # Excellent GPU availability - big bonus! (5090, 4090, etc.)
                 score *= 2.0
+            elif gpu_mem > 4000:
+                # Good GPU availability - bonus! (3060, 3070, 4060, etc.)
+                score *= 1.5
+            elif gpu_mem >= 2000:
+                # Mid-range VRAM (2-4GB) - neutral
+                score *= 1.0
+        elif context.metadata.get("gpu_fallback_to_cpu"):
+            # GPU fallback to CPU enabled - prefer hosts with available resources
+            # This happens when all GPUs are overwhelmed
+            gpu_mem = host_meta.get("gpu_free_mem", 0)
+            if gpu_mem == 0:
+                # CPU-only node - acceptable when GPU fallback enabled
+                score *= 1.0  # No penalty (fair chance against overwhelmed GPUs)
+            elif gpu_mem < 2000:
+                # Overwhelmed GPU - slight penalty
+                score *= 0.7
+            else:
+                # GPU with decent VRAM - still preferred
+                score *= 1.2
 
         # CPU requirements based on complexity
-        cpu_load = host_meta.get("cpu_load", 0.5)
-        if context.complexity == "complex":
-            # Complex tasks need low CPU load
-            if cpu_load > 0.8:
-                score *= 0.3  # Very busy host, bad for complex tasks
-            elif cpu_load < 0.3:
-                score *= 1.3  # Idle host, great for complex tasks
-        elif context.complexity == "simple":
-            # Simple tasks can tolerate higher load
-            if cpu_load > 0.9:
-                score *= 0.7  # Still penalize very busy hosts
-            # Don't bonus idle hosts for simple tasks
+        # Skip CPU penalties for low-VRAM overflow GPUs - any GPU is better than waiting
+        gpu_mem = host_meta.get("gpu_free_mem", 4000)
+        is_overflow_gpu = gpu_mem < 2000  # Low-VRAM GPU used for overflow
+
+        cpu_load = host_meta.get("cpu_load", 0.5)  # Get cpu_load for all hosts
+
+        if not is_overflow_gpu:  # Only apply CPU penalties to primary GPUs
+            if context.complexity == "complex":
+                # Complex tasks need low CPU load
+                if cpu_load > 0.8:
+                    score *= 0.3  # Very busy host, bad for complex tasks
+                elif cpu_load < 0.3:
+                    score *= 1.3  # Idle host, great for complex tasks
+            elif context.complexity == "simple":
+                # Simple tasks can tolerate higher load
+                if cpu_load > 0.9:
+                    score *= 0.7  # Still penalize very busy hosts
+                # Don't bonus idle hosts for simple tasks
 
         # Factor 3: Current performance
         success_rate = host_meta.get("success_rate", 1.0)
         score *= success_rate  # Direct multiplier
 
-        latency_ms = host_meta.get("latency_ms", 200.0)
-        # Latency penalty scales with task priority and is more aggressive for extreme values
-        latency_weight = 1.0 + (context.priority / 10.0)  # 1.0 to 2.0
+        # Skip latency penalties for overflow GPUs - speed matters less than availability
+        if not is_overflow_gpu:  # Only penalize latency on primary GPUs
+            latency_ms = host_meta.get("latency_ms", 200.0)
+            # Latency penalty scales with task priority and is more aggressive for extreme values
+            latency_weight = 1.0 + (context.priority / 10.0)  # 1.0 to 2.0
 
-        # Reduce penalty for fast local network latency (<200ms)
-        # Anything under 200ms is considered "fast" - minimal penalty
-        if latency_ms < 200:
-            # Gentle penalty for local network latency
-            latency_penalty = (latency_ms / 1000.0) * latency_weight  # Much smaller penalty
-        elif latency_ms > 1000:
-            # Exponential penalty for very high latency
-            latency_penalty = (latency_ms / 100.0) * latency_weight
-        else:
-            # Standard penalty for medium latency (200-1000ms)
-            latency_penalty = min(latency_ms / 100.0, 10.0) * latency_weight
-        score /= 1 + latency_penalty
+            # Reduce penalty for fast local network latency (<200ms)
+            # Anything under 200ms is considered "fast" - minimal penalty
+            if latency_ms < 200:
+                # Gentle penalty for local network latency
+                latency_penalty = (latency_ms / 1000.0) * latency_weight  # Much smaller penalty
+            elif latency_ms > 1000:
+                # Exponential penalty for very high latency
+                latency_penalty = (latency_ms / 100.0) * latency_weight
+            else:
+                # Standard penalty for medium latency (200-1000ms)
+                latency_penalty = min(latency_ms / 100.0, 10.0) * latency_weight
+            score /= 1 + latency_penalty
 
         # Factor 4: Additional load considerations
+        # Active concurrent requests - VRAM-aware load balancing
+        # Penalty proportional to VRAM capacity to avoid overloading small GPUs
+        active_requests = host_meta.get("active_requests", 0)
+        if active_requests > 0:
+            gpu_mem = host_meta.get("gpu_free_mem", 4000)  # Default to mid-range
+
+            # Calculate penalty based on VRAM capacity
+            # Small GPUs get penalized more heavily per request (avoid overload)
+            # Large GPUs can handle more concurrent requests
+            if gpu_mem < 2000:
+                # Small GPU (1050Ti) - each request is significant load
+                penalty_per_request = 0.50  # 50% penalty per request (aggressive)
+            elif gpu_mem < 4000:
+                # Mid-small GPU (2-4GB) - moderate-high penalty
+                penalty_per_request = 0.35  # 35% penalty per request
+            elif gpu_mem < 8000:
+                # Mid GPU (4-8GB, like 3060) - moderate penalty
+                penalty_per_request = 0.25  # 25% penalty per request
+            else:
+                # Large GPU (8GB+, like 4090/5090) - light penalty
+                penalty_per_request = 0.15  # 15% penalty per request (can handle load)
+
+            active_penalty = active_requests * penalty_per_request
+            score /= 1 + active_penalty
+
+        # CPU load - historical average
         # Penalize heavily loaded nodes more for high-priority tasks
         if context.priority >= 7:  # High priority
             load_penalty = cpu_load * 3.0  # Aggressive penalty

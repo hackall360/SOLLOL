@@ -8,17 +8,21 @@ Features full SynapticLlamas observability:
 - Intelligent routing with task analysis
 - Performance tracking and learning
 - Detailed logging of routing decisions
+- Real-time VRAM monitoring for GPU-aware routing
 """
 
+import asyncio
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 import requests
 
 from .intelligence import IntelligentRouter, get_router
 from .node_health import NodeHealthMonitor, normalize_model_name
+from .vram_monitor import VRAMMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,11 @@ class OllamaPool:
         # Initialize health monitoring (FlockParser pattern)
         self.health_monitor = NodeHealthMonitor()
 
+        # Initialize VRAM monitoring for GPU-aware routing
+        self.vram_monitor = VRAMMonitor()
+        self._vram_refresh_interval = 30  # seconds
+        self._vram_refresh_enabled = True
+
         # Enhanced stats tracking with performance metrics
         self.stats = {
             "total_requests": 0,
@@ -74,10 +83,18 @@ class OllamaPool:
         # Initialize node metadata for intelligent routing
         self._init_node_metadata()
 
+        # Start background VRAM monitoring thread
+        self._vram_refresh_thread = threading.Thread(
+            target=self._refresh_vram_loop,
+            daemon=True,
+            name="OllamaPool-VRAM-Monitor"
+        )
+        self._vram_refresh_thread.start()
+
         logger.info(
             f"OllamaPool initialized with {len(self.nodes)} nodes "
             f"(intelligent_routing={'enabled' if enable_intelligent_routing else 'disabled'}, "
-            f"vram_monitoring=enabled)"
+            f"vram_monitoring=enabled, gpu_type={self.vram_monitor.gpu_type})"
         )
 
     @classmethod
@@ -109,11 +126,14 @@ class OllamaPool:
                 logger.info(f"Auto-discovered {len(nodes)} nodes: {nodes}")
 
     def _init_node_metadata(self):
-        """Initialize metadata for each node for intelligent routing."""
+        """Initialize metadata for each node with REAL VRAM data."""
         with self._lock:
             for node in self.nodes:
                 node_key = f"{node['host']}:{node['port']}"
                 if node_key not in self.stats["node_performance"]:
+                    # Query VRAM for this node
+                    gpu_free_mem = self._query_node_vram(node)
+
                     self.stats["node_performance"][node_key] = {
                         "host": node_key,
                         "latency_ms": 0.0,
@@ -121,10 +141,15 @@ class OllamaPool:
                         "total_requests": 0,
                         "failed_requests": 0,
                         "available": True,
+                        "active_requests": 0,  # Real-time concurrent load
                         "cpu_load": 0.5,  # Default assumption
-                        "gpu_free_mem": 0,  # Unknown until checked
+                        "gpu_free_mem": gpu_free_mem,  # REAL VRAM DATA
                         "priority": 999,  # Default priority
                     }
+
+                    logger.debug(
+                        f"Initialized {node_key}: gpu_free_mem={gpu_free_mem}MB"
+                    )
 
     def _select_node(
         self, payload: Optional[Dict[str, Any]] = None, priority: int = 5
@@ -215,6 +240,13 @@ class OllamaPool:
             node_key = f"{node['host']}:{node['port']}"
             url = f"http://{node['host']}:{node['port']}{endpoint}"
 
+            # Track active request (for load balancing)
+            with self._lock:
+                if node_key in self.stats["node_performance"]:
+                    self.stats["node_performance"][node_key]["active_requests"] = (
+                        self.stats["node_performance"][node_key].get("active_requests", 0) + 1
+                    )
+
             # Track request start time
             start_time = time.time()
 
@@ -291,11 +323,149 @@ class OllamaPool:
                 logger.debug(f"Request failed: {e}")
                 self._record_failure(node_key, latency_ms)
 
+            finally:
+                # Decrement active request counter (always runs)
+                with self._lock:
+                    if node_key in self.stats["node_performance"]:
+                        self.stats["node_performance"][node_key]["active_requests"] = max(
+                            0,
+                            self.stats["node_performance"][node_key].get("active_requests", 1) - 1
+                        )
+
         # All nodes failed
         with self._lock:
             self.stats["failed_requests"] += 1
 
         raise RuntimeError(f"All Ollama nodes failed. Errors: {'; '.join(errors)}")
+
+    def _query_node_vram(self, node: Dict[str, str]) -> int:
+        """
+        Query VRAM for a specific node.
+
+        For localhost: Use nvidia-smi/rocm-smi directly
+        For remote: Query via Ollama /api/ps endpoint
+
+        Args:
+            node: Node dict with host and port
+
+        Returns:
+            Free VRAM in MB, or 0 if unknown
+        """
+        host = node["host"]
+        port = node.get("port", "11434")
+
+        # Check if this is localhost
+        if host in ("localhost", "127.0.0.1"):
+            # Use local VRAM monitoring
+            local_vram = self.vram_monitor.get_local_vram_info()
+            if local_vram:
+                free_mb = local_vram.get("free_vram_mb", 0)
+                logger.debug(f"Local VRAM: {free_mb}MB free ({local_vram['vendor']})")
+                return free_mb
+            else:
+                logger.debug("No local GPU detected")
+                return 0
+
+        # Remote node - query via Ollama API
+        try:
+            url = f"http://{host}:{port}/api/ps"
+            response = requests.get(url, timeout=2.0)
+
+            if response.status_code == 200:
+                ps_data = response.json()
+                # Parse GPU info from /api/ps response
+                free_mb = self._parse_vram_from_ps(ps_data)
+                logger.debug(f"Remote {host}:{port} VRAM: {free_mb}MB free")
+                return free_mb
+            else:
+                logger.debug(f"Remote {host}:{port} /api/ps returned {response.status_code}")
+                return 0
+
+        except Exception as e:
+            logger.debug(f"Failed to query VRAM for {host}:{port}: {e}")
+            return 0
+
+    def _parse_vram_from_ps(self, ps_data: Dict) -> int:
+        """
+        Parse VRAM info from Ollama /api/ps response.
+
+        Args:
+            ps_data: Response from /api/ps
+
+        Returns:
+            Estimated free VRAM in MB
+        """
+        try:
+            # Ollama /api/ps format:
+            # {
+            #   "models": [
+            #     {
+            #       "name": "llama3.1:8b",
+            #       "size": 4661211648,  # bytes
+            #       "size_vram": 4661211648
+            #     }
+            #   ]
+            # }
+
+            models = ps_data.get("models", [])
+
+            # Sum up VRAM used by loaded models
+            total_vram_used_mb = 0
+            for model in models:
+                size_vram_bytes = model.get("size_vram", 0)
+                total_vram_used_mb += size_vram_bytes / (1024 * 1024)
+
+            # Estimate total VRAM capacity
+            # If we have local GPU info, use that for total
+            # Otherwise estimate based on usage
+            local_vram = self.vram_monitor.get_local_vram_info()
+            if local_vram:
+                total_vram_mb = local_vram.get("total_vram_mb", 0)
+            else:
+                # Conservative estimate: assume 8GB GPU if unknown
+                total_vram_mb = 8192
+
+            # Calculate free VRAM
+            free_vram_mb = max(0, total_vram_mb - total_vram_used_mb)
+
+            return int(free_vram_mb)
+
+        except Exception as e:
+            logger.debug(f"Failed to parse VRAM from /api/ps: {e}")
+            return 0
+
+    def _refresh_vram_loop(self):
+        """Background thread to periodically refresh VRAM data."""
+        logger.debug("VRAM monitoring thread started")
+
+        while self._vram_refresh_enabled:
+            try:
+                time.sleep(self._vram_refresh_interval)
+
+                # Refresh VRAM for all nodes
+                with self._lock:
+                    for node in self.nodes:
+                        node_key = f"{node['host']}:{node['port']}"
+
+                        if node_key in self.stats["node_performance"]:
+                            # Query current VRAM
+                            gpu_free_mem = self._query_node_vram(node)
+
+                            # Update metadata
+                            old_vram = self.stats["node_performance"][node_key].get("gpu_free_mem", 0)
+                            self.stats["node_performance"][node_key]["gpu_free_mem"] = gpu_free_mem
+
+                            # Log significant changes
+                            if abs(gpu_free_mem - old_vram) > 1000:  # >1GB change
+                                logger.info(
+                                    f"🔄 VRAM changed on {node_key}: "
+                                    f"{old_vram}MB → {gpu_free_mem}MB"
+                                )
+
+            except Exception as e:
+                logger.error(f"VRAM refresh loop error: {e}")
+
+        logger.debug("VRAM monitoring thread stopped")
 
     def _record_failure(self, node_key: str, latency_ms: float):
         """Record a failed request for a node."""
@@ -386,12 +556,21 @@ class OllamaPool:
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive pool statistics with performance metrics."""
         with self._lock:
+            # Get real-time VRAM data
+            local_vram = self.vram_monitor.get_local_vram_info()
+
             stats_data = {
                 **self.stats,
                 "nodes_configured": len(self.nodes),
                 "nodes": [f"{n['host']}:{n['port']}" for n in self.nodes],
                 "intelligent_routing_enabled": self.enable_intelligent_routing,
-                "vram_monitoring": self.health_monitor.get_stats(),  # FlockParser health monitoring
+                "vram_monitoring": {
+                    "enabled": True,
+                    "gpu_type": self.vram_monitor.gpu_type,
+                    "local_gpu": local_vram if local_vram else {},
+                    "refresh_interval_seconds": self._vram_refresh_interval,
+                    "health_monitoring": self.health_monitor.get_stats(),
+                },
             }
             return stats_data
 
@@ -422,6 +601,135 @@ class OllamaPool:
             if node in self.nodes:
                 self.nodes.remove(node)
                 logger.info(f"Removed node: {host}:{port}")
+
+    def stop(self):
+        """
+        Stop the pool and cleanup background threads.
+
+        This method stops the VRAM refresh thread and performs cleanup.
+        Call this when shutting down the pool to ensure proper resource cleanup.
+        """
+        logger.info("Stopping OllamaPool and cleaning up background threads...")
+
+        # Stop VRAM refresh thread
+        self._vram_refresh_enabled = False
+        if self._vram_refresh_thread and self._vram_refresh_thread.is_alive():
+            self._vram_refresh_thread.join(timeout=5.0)
+            if self._vram_refresh_thread.is_alive():
+                logger.warning("VRAM refresh thread did not stop within timeout")
+            else:
+                logger.info("VRAM refresh thread stopped successfully")
+
+        logger.info("OllamaPool stopped")
+
+    # Async methods for concurrent request handling
+    async def chat_async(
+        self,
+        model: str,
+        messages: List[Dict[str, str]],
+        stream: bool = False,
+        priority: int = 5,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Async chat completion with intelligent routing (enables parallel requests).
+
+        Args:
+            model: Model name (e.g., "llama3.2")
+            messages: Chat messages
+            stream: Stream response (not supported yet)
+            priority: Request priority 1-10 (default: 5)
+            **kwargs: Additional Ollama parameters
+
+        Returns:
+            Chat response dict
+
+        Example:
+            ```python
+            import asyncio
+            pool = OllamaPool.auto_configure()
+
+            # Run multiple requests in parallel
+            tasks = [
+                pool.chat_async("llama3.2", [{"role": "user", "content": "Hello"}]),
+                pool.chat_async("llama3.2", [{"role": "user", "content": "Hi"}]),
+                pool.chat_async("llama3.2", [{"role": "user", "content": "Hey"}]),
+            ]
+            responses = await asyncio.gather(*tasks)
+            ```
+        """
+        if stream:
+            raise NotImplementedError("Streaming not supported yet")
+
+        data = {"model": model, "messages": messages, "stream": False, **kwargs}
+
+        # Run synchronous _make_request in thread pool to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,  # Use default executor
+            lambda: self._make_request("/api/chat", data, priority=priority)
+        )
+
+    async def generate_async(
+        self, model: str, prompt: str, stream: bool = False, priority: int = 5, **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Async generation with intelligent routing (enables parallel requests).
+
+        Args:
+            model: Model name
+            prompt: Text prompt
+            stream: Stream response (not supported yet)
+            priority: Request priority 1-10 (default: 5)
+            **kwargs: Additional Ollama parameters
+
+        Returns:
+            Generation response dict
+
+        Example:
+            ```python
+            import asyncio
+            pool = OllamaPool.auto_configure()
+
+            # Run multiple generations in parallel across heterogeneous GPUs
+            prompts = ["Tell me a joke", "Explain AI", "Write a poem"]
+            tasks = [pool.generate_async("llama3.2", p) for p in prompts]
+            responses = await asyncio.gather(*tasks)
+            ```
+        """
+        if stream:
+            raise NotImplementedError("Streaming not supported yet")
+
+        data = {"model": model, "prompt": prompt, "stream": False, **kwargs}
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self._make_request("/api/generate", data, priority=priority)
+        )
+
+    async def embed_async(
+        self, model: str, input: str, priority: int = 5, **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Async embedding generation with intelligent routing.
+
+        Args:
+            model: Embedding model name
+            input: Text to embed
+            priority: Request priority 1-10 (default: 5)
+            **kwargs: Additional Ollama parameters
+
+        Returns:
+            Embedding response dict
+        """
+        data = {"model": model, "input": input, **kwargs}
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self._make_request("/api/embed", data, priority=priority)
+        )
 
     def __repr__(self):
         return f"OllamaPool(nodes={len(self.nodes)}, requests={self.stats['total_requests']})"
