@@ -1,176 +1,189 @@
 #!/usr/bin/env python3
 """
-SOLLOL Unified Dashboard Demo
+SOLLOL Unified Dashboard - Programmatic Usage Example
 
-Demonstrates the integrated monitoring dashboard with:
-1. Ray dashboard (task timeline, distributed tracing)
-2. Dask dashboard (performance profiling)
-3. SOLLOL metrics (high-level overview)
-4. Prometheus export
-5. Real-time distributed tracing
+This example shows how any application can use SOLLOL's unified dashboard
+for universal network observability - it works WITHOUT requiring a router!
 
-Access dashboards at:
-- Unified: http://localhost:8080
-- Ray: http://localhost:8265
-- Dask: http://localhost:8787
-- Prometheus: http://localhost:8080/api/prometheus
+The dashboard automatically:
+1. Auto-discovers Ollama nodes on the network
+2. Detects RPC backends
+3. Streams real-time events via WebSocket
+4. Provides HTTP endpoints for current state
 """
 
-import asyncio
-import logging
-import threading
-import time
+from sollol.unified_dashboard import UnifiedDashboard
 
-from sollol import (
-    RayAdvancedRouter,
-    OllamaPool,
-    UnifiedDashboard,
-    get_tracer,
-)
+def example_1_standalone():
+    """
+    Example 1: Standalone dashboard (no router needed)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+    Perfect for monitoring your Ollama cluster without SOLLOL gateway.
+    """
+    print("=" * 70)
+    print("Example 1: Standalone Dashboard (Router-Agnostic)")
+    print("=" * 70)
 
+    # Create dashboard without any router - it auto-discovers nodes
+    dashboard = UnifiedDashboard(
+        dashboard_port=8080,
+        ray_dashboard_port=8265,
+        dask_dashboard_port=8787
+    )
 
-async def run_sample_requests(router, dashboard):
-    """Run sample requests to generate dashboard data."""
-    tracer = get_tracer(dashboard=dashboard)
+    print("\n✅ Dashboard initialized (router-agnostic)")
+    print("   📊 HTTP Endpoints:")
+    print("      - http://localhost:8080/api/network/nodes")
+    print("      - http://localhost:8080/api/network/backends")
+    print("      - http://localhost:8080/api/network/health")
+    print("\n   🔌 WebSocket Endpoints:")
+    print("      - ws://localhost:8080/ws/network/nodes (event-driven)")
+    print("      - ws://localhost:8080/ws/network/backends (event-driven)")
+    print("      - ws://localhost:8080/ws/ollama_activity (model lifecycle)")
+    print("      - ws://localhost:8080/ws/logs (centralized logs)")
+    print("\n   🎨 Web UI:")
+    print("      - http://localhost:8080")
+    print("\n🚀 Starting dashboard...")
 
-    test_requests = [
-        ("llama3.2:3b", "What is 2+2?"),
-        ("llama3.2:3b", "What is the capital of France?"),
-        ("llama3.2:3b", "Explain photosynthesis briefly."),
-    ]
-
-    logger.info("🚀 Sending sample requests to generate dashboard data...\n")
-
-    for i, (model, prompt) in enumerate(test_requests, 1):
-        try:
-            # Start trace
-            trace_span = tracer.start_trace(
-                operation="chat",
-                backend="ollama",
-                model=model,
-                request_id=f"req-{i}"
-            )
-
-            start_time = time.time()
-
-            # Make request
-            response = await router.route_request(
-                model=model,
-                messages=[{"role": "user", "content": prompt}]
-            )
-
-            latency_ms = (time.time() - start_time) * 1000
-
-            # End trace
-            tracer.end_span(
-                trace_span,
-                status="success",
-                latency_ms=latency_ms,
-                response_length=len(response['message']['content'])
-            )
-
-            # Record in dashboard
-            dashboard.record_request(
-                model=model,
-                backend="ollama",
-                latency_ms=latency_ms,
-                status="success"
-            )
-
-            logger.info(f"✅ Request {i} completed ({latency_ms:.0f}ms)")
-            logger.info(f"   Prompt: {prompt}")
-            logger.info(f"   Response: {response['message']['content'][:80]}...\n")
-
-            await asyncio.sleep(2)  # Pause between requests
-
-        except Exception as e:
-            logger.error(f"❌ Request {i} failed: {e}\n")
-
-            # Record failure
-            tracer.end_span(trace_span, status="error", error=str(e))
-            dashboard.record_request(
-                model=model,
-                backend="error",
-                latency_ms=0,
-                status="error"
-            )
+    # Run dashboard - blocks until stopped
+    dashboard.run(host="0.0.0.0", debug=False)
 
 
-async def main():
-    """Main demo function."""
-    logger.info("=" * 80)
-    logger.info("  SOLLOL Unified Dashboard Demo")
-    logger.info("=" * 80 + "\n")
+def example_2_with_router():
+    """
+    Example 2: Dashboard with SOLLOL router
+
+    When using SOLLOL gateway, pass the router to get enhanced metrics.
+    """
+    print("=" * 70)
+    print("Example 2: Dashboard with SOLLOL Router")
+    print("=" * 70)
+
+    # This is how you'd use it with a SOLLOL router
+    from sollol.ray_hybrid_router import RayHybridRouter
 
     # Create router
-    logger.info("📡 Initializing RayAdvancedRouter...\n")
-    router = RayAdvancedRouter(
-        ollama_pool=OllamaPool.auto_configure(discover_all_nodes=True),
-        enable_batching=True,
-        enable_speculation=False,  # Disable for cleaner demo
-        auto_discover_rpc=True,
+    router = RayHybridRouter(
+        num_ray_workers=4,
+        enable_distributed=False
     )
 
-    # Create unified dashboard
-    logger.info("📊 Creating Unified Dashboard...\n")
+    # Create dashboard WITH router (gets enhanced metrics)
     dashboard = UnifiedDashboard(
         router=router,
-        ray_dashboard_port=8265,
-        dask_dashboard_port=8787,
-        dashboard_port=8080,
+        dashboard_port=8080
     )
 
-    # Start dashboard in background thread
-    dashboard_thread = threading.Thread(
-        target=dashboard.run,
-        kwargs={"host": "0.0.0.0", "debug": False},
-        daemon=True
-    )
-    dashboard_thread.start()
+    print("\n✅ Dashboard initialized with router")
+    print("   📊 Enhanced features:")
+    print("      - Router metrics (pool stats, routing decisions)")
+    print("      - Ray cluster info")
+    print("      - Performance analytics (P50/P95/P99)")
+    print("\n🚀 Starting dashboard...")
 
-    logger.info("✅ Dashboard started!\n")
-    logger.info("🌐 Access dashboards at:\n")
-    logger.info("   📊 Unified Dashboard:  http://localhost:8080")
-    logger.info("   📈 Ray Dashboard:      http://localhost:8265")
-    logger.info("   📉 Dask Dashboard:     http://localhost:8787")
-    logger.info("   📉 Prometheus Metrics: http://localhost:8080/api/prometheus")
-    logger.info("\n" + "=" * 80 + "\n")
+    dashboard.run(host="0.0.0.0")
 
-    # Wait for dashboard to start
-    await asyncio.sleep(2)
 
-    # Run sample requests
-    await run_sample_requests(router, dashboard)
+def example_3_synapticllamas():
+    """
+    Example 3: How to use from SynapticLlamas
 
-    # Keep running to allow dashboard exploration
-    logger.info("=" * 80)
-    logger.info("  Dashboard Running - Press Ctrl+C to exit")
-    logger.info("=" * 80 + "\n")
+    Shows integration pattern for SynapticLlamas or any other application.
+    """
+    print("=" * 70)
+    print("Example 3: Integration from SynapticLlamas")
+    print("=" * 70)
 
-    logger.info("💡 Explore the unified dashboard at http://localhost:8080\n")
-    logger.info("   You'll see:")
-    logger.info("   • P50/P95/P99 latency metrics")
-    logger.info("   • Success rate and active pools")
-    logger.info("   • Distributed traces with timing")
-    logger.info("   • Embedded Ray dashboard (task timeline)")
-    logger.info("   • Embedded Dask dashboard (performance profiling)")
-    logger.info("   • Prometheus metrics export\n")
+    # In your SynapticLlamas main.py or __init__.py:
+    print("\n```python")
+    print("from sollol.unified_dashboard import UnifiedDashboard")
+    print("import threading")
+    print()
+    print("def start_sollol_dashboard():")
+    print('    """Start SOLLOL dashboard in background thread."""')
+    print("    dashboard = UnifiedDashboard(dashboard_port=8080)")
+    print("    dashboard.run(host='0.0.0.0')")
+    print()
+    print("# Start dashboard in background")
+    print("dashboard_thread = threading.Thread(")
+    print("    target=start_sollol_dashboard,")
+    print("    daemon=True,")
+    print("    name='SOLLOLDashboard'")
+    print(")")
+    print("dashboard_thread.start()")
+    print()
+    print("# Your application continues running...")
+    print("# Dashboard is now monitoring your network at http://localhost:8080")
+    print("```")
+    print("\n✅ Dashboard runs in background, your app continues normally")
 
-    try:
-        while True:
-            await asyncio.sleep(60)
-            logger.info("📊 Dashboard still running... (Press Ctrl+C to exit)")
-    except KeyboardInterrupt:
-        logger.info("\n\n🛑 Shutting down...")
-        await router.shutdown()
-        logger.info("✅ Shutdown complete!")
+
+def example_4_websocket_client():
+    """
+    Example 4: WebSocket client example
+
+    Shows how to consume real-time events from the dashboard.
+    """
+    print("=" * 70)
+    print("Example 4: WebSocket Client (Consuming Events)")
+    print("=" * 70)
+
+    print("\n```python")
+    print("import websocket")
+    print("import json")
+    print()
+    print("# Connect to node events stream")
+    print("ws = websocket.create_connection('ws://localhost:8080/ws/network/nodes')")
+    print()
+    print("while True:")
+    print("    event = json.loads(ws.recv())")
+    print("    ")
+    print("    if event['type'] == 'node_discovered':")
+    print("        print(f\"✅ {event['message']}\")")
+    print("    elif event['type'] == 'status_change':")
+    print("        print(f\"🔄 {event['message']}\")")
+    print("    elif event['type'] == 'node_removed':")
+    print("        print(f\"❌ {event['message']}\")")
+    print("```")
+    print("\nEvent Types:")
+    print("  /ws/network/nodes:")
+    print("    - node_discovered")
+    print("    - status_change (healthy ↔ unhealthy)")
+    print("    - node_removed")
+    print("    - heartbeat (every 10s)")
+    print("\n  /ws/network/backends:")
+    print("    - backend_connected")
+    print("    - backend_disconnected")
+    print("    - heartbeat")
+    print("\n  /ws/ollama_activity:")
+    print("    - model_loaded")
+    print("    - model_unloaded")
+    print("    - model_processing")
+    print("    - node_error")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+
+    examples = {
+        "1": ("Standalone (no router)", example_1_standalone),
+        "2": ("With SOLLOL router", example_2_with_router),
+        "3": ("SynapticLlamas integration", example_3_synapticllamas),
+        "4": ("WebSocket client", example_4_websocket_client),
+    }
+
+    print("\n🎯 SOLLOL Unified Dashboard - Programmatic Usage Examples\n")
+    print("Choose an example:")
+    for key, (desc, _) in examples.items():
+        print(f"  {key}. {desc}")
+    print()
+
+    choice = input("Enter example number (1-4): ").strip()
+
+    if choice in examples:
+        _, func = examples[choice]
+        print()
+        func()
+    else:
+        print("Invalid choice. Running Example 1 (standalone)...")
+        example_1_standalone()
