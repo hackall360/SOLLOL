@@ -36,6 +36,9 @@ class OllamaPool:
         response = pool.chat("llama3.2", [{"role": "user", "content": "Hi"}])
     """
 
+    # VRAM safety buffer (MB) - subtracted from reported free VRAM to prevent OOM
+    VRAM_BUFFER_MB = 200  # 0.2GB cushion for system processes and safety margin
+
     def __init__(
         self,
         nodes: Optional[List[Dict[str, str]]] = None,
@@ -356,15 +359,19 @@ class OllamaPool:
 
         # Check if this is localhost
         if host in ("localhost", "127.0.0.1"):
-            # Use local VRAM monitoring
+            # Try local VRAM monitoring (nvidia-smi, rocm-smi, etc.)
             local_vram = self.vram_monitor.get_local_vram_info()
-            if local_vram:
+            if local_vram and local_vram.get("free_vram_mb", 0) > 0:
                 free_mb = local_vram.get("free_vram_mb", 0)
-                logger.debug(f"Local VRAM: {free_mb}MB free ({local_vram['vendor']})")
-                return free_mb
+                # Apply VRAM buffer for safety margin
+                free_mb_with_buffer = max(0, free_mb - self.VRAM_BUFFER_MB)
+                logger.debug(f"Local VRAM: {free_mb}MB free, {free_mb_with_buffer}MB after {self.VRAM_BUFFER_MB}MB buffer ({local_vram['vendor']})")
+                return free_mb_with_buffer
             else:
-                logger.debug("No local GPU detected")
-                return 0
+                # nvidia-smi failed or not installed (old GPUs, incompatible drivers)
+                # Fall back to querying Ollama /api/ps for localhost
+                logger.debug("nvidia-smi unavailable for localhost, falling back to Ollama /api/ps")
+                # Fall through to remote query logic below (works for localhost too)
 
         # Remote node - query via Ollama API
         try:
@@ -385,9 +392,86 @@ class OllamaPool:
             logger.debug(f"Failed to query VRAM for {host}:{port}: {e}")
             return 0
 
+    def _estimate_gpu_vram_from_model(self) -> int:
+        """
+        Estimate GPU VRAM capacity from GPU model name (for GPUs without nvidia-smi).
+
+        Uses lspci detection from VRAMMonitor to get GPU model, then looks up
+        known VRAM capacity. Critical for old GPUs where nvidia-smi doesn't work.
+
+        Returns:
+            Estimated VRAM in MB, or 0 if unknown
+        """
+        # GPU Model → VRAM (MB) lookup table for common GPUs without nvidia-smi support
+        GPU_VRAM_TABLE = {
+            # NVIDIA GTX 10 series (mostly have nvidia-smi, but some old drivers don't)
+            "GTX 1050": 2048,      # 2GB
+            "GTX 1050 Ti": 4096,   # 4GB
+            "GTX 1060": 6144,      # 6GB (also 3GB variant exists)
+            "GTX 1070": 8192,      # 8GB
+            "GTX 1080": 8192,      # 8GB
+            "GTX 1080 Ti": 11264,  # 11GB
+
+            # NVIDIA GTX 900 series
+            "GTX 950": 2048,       # 2GB
+            "GTX 960": 2048,       # 2GB (also 4GB variant)
+            "GTX 970": 4096,       # 4GB
+            "GTX 980": 4096,       # 4GB
+            "GTX 980 Ti": 6144,    # 6GB
+
+            # NVIDIA GTX 700 series
+            "GTX 750": 1024,       # 1GB (also 2GB variant)
+            "GTX 750 Ti": 2048,    # 2GB
+            "GTX 760": 2048,       # 2GB
+            "GTX 770": 2048,       # 2GB
+            "GTX 780": 3072,       # 3GB
+            "GTX 780 Ti": 3072,    # 3GB
+
+            # NVIDIA GTX 600 series
+            "GTX 650": 1024,       # 1GB
+            "GTX 660": 2048,       # 2GB
+            "GTX 670": 2048,       # 2GB
+            "GTX 680": 2048,       # 2GB
+            "GTX 690": 4096,       # 4GB (2GB per GPU, dual GPU)
+
+            # NVIDIA GTX 500 series and older (nvidia-smi often unavailable)
+            "GTX 580": 1536,       # 1.5GB
+            "GTX 570": 1280,       # 1.25GB
+            "GTX 560": 1024,       # 1GB
+            "GTX 550 Ti": 1024,    # 1GB
+
+            # Quadro cards (older ones)
+            "Quadro K620": 2048,
+            "Quadro K1200": 4096,
+            "Quadro K2200": 4096,
+            "Quadro P400": 2048,
+            "Quadro P1000": 4096,
+            "Quadro P2000": 5120,
+        }
+
+        # Try to get GPU info from VRAMMonitor
+        local_vram = self.vram_monitor.get_local_vram_info()
+        if not local_vram or local_vram.get("total_vram_mb", 0) == 0:
+            # nvidia-smi failed, check if we have GPU names from lspci fallback
+            if local_vram and "gpus" in local_vram:
+                for gpu in local_vram["gpus"]:
+                    gpu_name = gpu.get("name", "")
+
+                    # Try to match GPU model in lookup table
+                    for model_key, vram_mb in GPU_VRAM_TABLE.items():
+                        if model_key.upper() in gpu_name.upper():
+                            logger.info(f"Estimated VRAM for {gpu_name}: {vram_mb}MB (from model lookup)")
+                            return vram_mb
+
+        # Unknown GPU model, return 0 (will use conservative fallback)
+        return 0
+
     def _parse_vram_from_ps(self, ps_data: Dict) -> int:
         """
         Parse VRAM info from Ollama /api/ps response.
+
+        For GPUs where nvidia-smi doesn't work (old drivers, incompatible versions),
+        this calculates VRAM based on loaded models + estimated GPU capacity.
 
         Args:
             ps_data: Response from /api/ps
@@ -415,20 +499,36 @@ class OllamaPool:
                 size_vram_bytes = model.get("size_vram", 0)
                 total_vram_used_mb += size_vram_bytes / (1024 * 1024)
 
-            # Estimate total VRAM capacity
-            # If we have local GPU info, use that for total
-            # Otherwise estimate based on usage
+            # Determine total VRAM capacity (priority order):
+            # 1. From nvidia-smi (if available)
+            # 2. From GPU model lookup table (for old GPUs)
+            # 3. Conservative fallback based on loaded models
+
             local_vram = self.vram_monitor.get_local_vram_info()
-            if local_vram:
+            if local_vram and local_vram.get("total_vram_mb", 0) > 0:
+                # nvidia-smi worked - use accurate total
                 total_vram_mb = local_vram.get("total_vram_mb", 0)
             else:
-                # Conservative estimate: assume 8GB GPU if unknown
-                total_vram_mb = 8192
+                # nvidia-smi failed - try model-based estimation
+                estimated_vram = self._estimate_gpu_vram_from_model()
+                if estimated_vram > 0:
+                    total_vram_mb = estimated_vram
+                elif total_vram_used_mb > 0:
+                    # Model is loaded but we don't know GPU capacity
+                    # Conservative: assume GPU is almost full (loaded + 512MB headroom)
+                    total_vram_mb = total_vram_used_mb + 512
+                    logger.warning(f"Unknown GPU capacity, assuming {total_vram_mb:.0f}MB based on loaded models")
+                else:
+                    # Nothing loaded and unknown GPU - assume small GPU
+                    total_vram_mb = 2048  # 2GB conservative default
+                    logger.warning("Unknown GPU with no loaded models, assuming 2GB capacity")
 
-            # Calculate free VRAM
+            # Calculate free VRAM with safety buffer
             free_vram_mb = max(0, total_vram_mb - total_vram_used_mb)
+            # Apply VRAM buffer for safety margin to prevent OOM
+            free_vram_mb_with_buffer = max(0, free_vram_mb - self.VRAM_BUFFER_MB)
 
-            return int(free_vram_mb)
+            return int(free_vram_mb_with_buffer)
 
         except Exception as e:
             logger.debug(f"Failed to parse VRAM from /api/ps: {e}")
