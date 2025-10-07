@@ -76,7 +76,7 @@ from sollol.rpc_registry import RPCBackendRegistry
 # Legacy support
 from sollol.sollol import SOLLOL
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"
 __all__ = [
     # Core
     "OllamaPool",
