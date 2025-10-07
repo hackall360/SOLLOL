@@ -873,6 +873,7 @@ response = llm("What is quantum computing?")
 ## 📚 Documentation
 
 - **[Architecture Guide](ARCHITECTURE.md)** - Deep dive into system design
+- **[Backend Architecture](BACKENDS.md)** - Backend extensibility and adding new LLM backends
 - **[Batch Processing API](BATCH_API.md)** - Complete guide to batch job management (NEW in v0.7.0)
   - API endpoints and examples
   - Job lifecycle and progress tracking
