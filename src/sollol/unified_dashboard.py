@@ -120,7 +120,20 @@ class UnifiedDashboard:
             try:
                 from dask.distributed import Client
                 self.dask_client = Client()
-                logger.info(f"📊 Dask client initialized - dashboard at http://localhost:{dask_dashboard_port}")
+
+                # Get actual dashboard URL from client (may be on different port if 8787 was taken)
+                if hasattr(self.dask_client, 'dashboard_link'):
+                    actual_dashboard_url = self.dask_client.dashboard_link
+                    # Extract port from URL like http://127.0.0.1:45423/status
+                    import re
+                    port_match = re.search(r':(\d+)', actual_dashboard_url)
+                    if port_match:
+                        self.dask_dashboard_port = int(port_match.group(1))
+                        logger.info(f"📊 Dask client initialized - dashboard at {actual_dashboard_url}")
+                    else:
+                        logger.info(f"📊 Dask client initialized - dashboard at http://localhost:{dask_dashboard_port}")
+                else:
+                    logger.info(f"📊 Dask client initialized - dashboard at http://localhost:{dask_dashboard_port}")
             except Exception as e:
                 logger.warning(f"⚠️  Could not initialize Dask client: {e}")
 
@@ -310,6 +323,16 @@ class UnifiedDashboard:
         def traces():
             """Get distributed traces."""
             return jsonify(list(self.trace_history))
+
+        @self.app.route("/api/dashboard/config")
+        def dashboard_config():
+            """Get dashboard configuration (actual ports, etc)."""
+            return jsonify({
+                "ray_dashboard_port": self.ray_dashboard_port,
+                "dask_dashboard_port": self.dask_dashboard_port,
+                "ray_dashboard_url": f"http://localhost:{self.ray_dashboard_port}",
+                "dask_dashboard_url": f"http://localhost:{self.dask_dashboard_port}",
+            })
 
         @self.app.route("/api/ray/metrics")
         def ray_metrics():
@@ -947,11 +970,12 @@ UNIFIED_DASHBOARD_HTML = """
         .container {
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
-            grid-template-rows: auto auto auto 1fr;
+            grid-template-rows: auto auto auto auto auto;
             gap: 1rem;
             padding: 1rem;
-            height: calc(100vh - 120px);
+            max-height: calc(100vh - 120px);
             overflow-y: auto;
+            overflow-x: hidden;
         }
         .metrics-bar {
             grid-column: 1 / -1;
@@ -984,6 +1008,8 @@ UNIFIED_DASHBOARD_HTML = """
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            min-height: 250px;
+            max-height: 400px;
         }
         .panel-header {
             background: #334155;
@@ -993,7 +1019,8 @@ UNIFIED_DASHBOARD_HTML = """
         }
         .panel-content {
             flex: 1;
-            overflow: hidden;
+            overflow: auto;
+            min-height: 200px;
         }
         iframe {
             width: 100%;
@@ -1198,6 +1225,23 @@ UNIFIED_DASHBOARD_HTML = """
     </div>
 
     <script>
+        // Fetch dashboard configuration once to get actual ports
+        let dashboardConfig = {
+            ray_dashboard_url: 'http://localhost:8265',
+            dask_dashboard_url: 'http://localhost:8787'
+        };
+
+        (async () => {
+            try {
+                const configRes = await fetch('/api/dashboard/config');
+                if (configRes.ok) {
+                    dashboardConfig = await configRes.json();
+                }
+            } catch (e) {
+                console.warn('Could not fetch dashboard config, using defaults');
+            }
+        })();
+
         // Update metrics every 2 seconds
         setInterval(async () => {
             try {
@@ -1382,7 +1426,7 @@ UNIFIED_DASHBOARD_HTML = """
                     if (rayRes.ok) {
                         document.getElementById('ray-status').className = 'status-indicator status-active';
                         if (!rayContent.querySelector('iframe')) {
-                            rayContent.innerHTML = '<iframe src="http://localhost:8265" style="width:100%;height:100%;border:none;"></iframe>';
+                            rayContent.innerHTML = `<iframe src="${dashboardConfig.ray_dashboard_url}" style="width:100%;height:100%;border:none;"></iframe>`;
                         }
                     } else {
                         document.getElementById('ray-status').className = 'status-indicator status-inactive';
@@ -1401,7 +1445,7 @@ UNIFIED_DASHBOARD_HTML = """
                     if (daskRes.ok) {
                         document.getElementById('dask-status').className = 'status-indicator status-active';
                         if (!daskContent.querySelector('iframe')) {
-                            daskContent.innerHTML = '<iframe src="http://localhost:8787" style="width:100%;height:100%;border:none;"></iframe>';
+                            daskContent.innerHTML = `<iframe src="${dashboardConfig.dask_dashboard_url}" style="width:100%;height:100%;border:none;"></iframe>`;
                         }
                     } else {
                         document.getElementById('dask-status').className = 'status-indicator status-inactive';
