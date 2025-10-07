@@ -192,10 +192,33 @@ class UnifiedDashboard:
                         })
                     return jsonify({"nodes": nodes, "total": len(nodes)})
                 else:
-                    # Fallback: auto-discover nodes
+                    # Fallback: auto-discover nodes and transform to expected format
                     from sollol.discovery import discover_ollama_nodes
+                    import requests
                     discovered = discover_ollama_nodes()
-                    return jsonify({"nodes": discovered, "total": len(discovered)})
+                    nodes = []
+                    for node_data in discovered:
+                        host = node_data.get("host", "localhost")
+                        port = node_data.get("port", 11434)
+                        url = f"http://{host}:{port}"
+
+                        # Try to ping the node for health check
+                        try:
+                            response = requests.get(f"{url}/api/tags", timeout=2)
+                            healthy = response.ok
+                            latency = int(response.elapsed.total_seconds() * 1000)
+                        except:
+                            healthy = False
+                            latency = 0
+
+                        nodes.append({
+                            "url": url,
+                            "status": "healthy" if healthy else "offline",
+                            "latency_ms": latency,
+                            "load_percent": 0,  # Unknown without pool
+                            "memory_mb": 0,  # Unknown without pool
+                        })
+                    return jsonify({"nodes": nodes, "total": len(nodes)})
             except Exception as e:
                 logger.error(f"Error getting network nodes: {e}")
                 return jsonify({"error": str(e), "nodes": []}), 500
@@ -209,10 +232,14 @@ class UnifiedDashboard:
                 # Try to get from router
                 if self.router and hasattr(self.router, 'rpc_backends'):
                     for backend in self.router.rpc_backends:
+                        host = backend.get("host")
+                        port = backend.get("port", 50052)
                         backends.append({
-                            "host": backend.get("host"),
-                            "port": backend.get("port", 50052),
-                            "status": "active",
+                            "url": f"{host}:{port}",
+                            "status": "healthy",
+                            "latency_ms": 0,
+                            "request_count": backend.get("request_count", 0),
+                            "failure_count": backend.get("failure_count", 0),
                         })
 
                 # Try to get from RPC registry
@@ -220,10 +247,15 @@ class UnifiedDashboard:
                     from sollol.rpc_registry import RPCBackendRegistry
                     registry = RPCBackendRegistry()
                     for backend in registry.list_backends():
+                        host = backend["host"]
+                        port = backend.get("port", 50052)
+                        status = backend.get("status", "unknown")
                         backends.append({
-                            "host": backend["host"],
-                            "port": backend.get("port", 50052),
-                            "status": backend.get("status", "unknown"),
+                            "url": f"{host}:{port}",
+                            "status": "healthy" if status == "active" else "offline",
+                            "latency_ms": backend.get("latency_ms", 0),
+                            "request_count": backend.get("request_count", 0),
+                            "failure_count": backend.get("failure_count", 0),
                         })
                 except:
                     pass
