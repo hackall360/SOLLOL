@@ -62,6 +62,7 @@ from sollol.llama_cpp_rpc import LlamaCppDistributedCluster, LlamaCppRPCClient
 # Monitoring & Dashboards
 from sollol.unified_dashboard import UnifiedDashboard, run_unified_dashboard
 from sollol.distributed_tracing import DistributedTracer, get_tracer
+from sollol.dashboard_client import DashboardClient
 
 # Distributed execution
 from sollol.execution import AsyncDistributedExecutor, DistributedExecutor
@@ -93,6 +94,7 @@ __all__ = [
     "run_unified_dashboard",
     "DistributedTracer",
     "get_tracer",
+    "DashboardClient",
     # Distributed execution
     "DistributedExecutor",
     "AsyncDistributedExecutor",

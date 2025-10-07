@@ -111,6 +111,10 @@ class UnifiedDashboard:
         self.request_history = deque(maxlen=1000)
         self.trace_history = deque(maxlen=100)
 
+        # Application registry (track which applications are using SOLLOL)
+        self.applications: Dict[str, Dict[str, Any]] = {}
+        self.application_timeout = 30  # seconds - consider app inactive if no heartbeat
+
         # Initialize Dask if requested
         if enable_dask:
             try:
@@ -323,6 +327,116 @@ class UnifiedDashboard:
             trace_data["timestamp"] = datetime.utcnow().isoformat()
             self.trace_history.append(trace_data)
             return jsonify({"status": "ok"})
+
+        @self.app.route("/api/applications")
+        def applications():
+            """Get all registered applications (universal)."""
+            try:
+                # Clean up stale applications first
+                self._cleanup_stale_applications()
+
+                # Return active applications
+                apps = []
+                for app_id, app_info in self.applications.items():
+                    uptime = time.time() - app_info["start_time"]
+                    last_seen = time.time() - app_info["last_heartbeat"]
+
+                    apps.append({
+                        "app_id": app_id,
+                        "name": app_info["name"],
+                        "router_type": app_info.get("router_type", "unknown"),
+                        "version": app_info.get("version", "unknown"),
+                        "start_time": app_info["start_time"],
+                        "last_heartbeat": app_info["last_heartbeat"],
+                        "uptime_seconds": int(uptime),
+                        "last_seen_seconds": int(last_seen),
+                        "status": "active" if last_seen < self.application_timeout else "stale",
+                        "metadata": app_info.get("metadata", {}),
+                    })
+
+                return jsonify({
+                    "applications": apps,
+                    "total": len(apps),
+                    "active": sum(1 for a in apps if a["status"] == "active"),
+                })
+            except Exception as e:
+                logger.error(f"Error getting applications: {e}")
+                return jsonify({"error": str(e), "applications": []}), 500
+
+        @self.app.route("/api/applications/register", methods=["POST"])
+        def register_application():
+            """Register a new application with the dashboard."""
+            try:
+                data = request.json
+                app_id = data.get("app_id")
+
+                if not app_id:
+                    return jsonify({"error": "app_id required"}), 400
+
+                # Register or update application
+                now = time.time()
+                if app_id not in self.applications:
+                    self.applications[app_id] = {
+                        "app_id": app_id,
+                        "name": data.get("name", "unknown"),
+                        "router_type": data.get("router_type", "unknown"),
+                        "version": data.get("version", "unknown"),
+                        "start_time": now,
+                        "last_heartbeat": now,
+                        "metadata": data.get("metadata", {}),
+                    }
+                    logger.info(f"📱 Application registered: {data.get('name')} ({app_id})")
+                else:
+                    # Update existing
+                    self.applications[app_id]["last_heartbeat"] = now
+                    self.applications[app_id].update({
+                        "name": data.get("name", self.applications[app_id]["name"]),
+                        "router_type": data.get("router_type", self.applications[app_id]["router_type"]),
+                        "version": data.get("version", self.applications[app_id]["version"]),
+                        "metadata": data.get("metadata", self.applications[app_id].get("metadata", {})),
+                    })
+
+                return jsonify({"status": "ok", "app_id": app_id})
+            except Exception as e:
+                logger.error(f"Error registering application: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route("/api/applications/heartbeat", methods=["POST"])
+        def application_heartbeat():
+            """Receive heartbeat from application to keep it active."""
+            try:
+                data = request.json
+                app_id = data.get("app_id")
+
+                if not app_id or app_id not in self.applications:
+                    return jsonify({"error": "app_id not registered"}), 404
+
+                # Update heartbeat
+                self.applications[app_id]["last_heartbeat"] = time.time()
+
+                # Update metadata if provided
+                if "metadata" in data:
+                    self.applications[app_id]["metadata"].update(data["metadata"])
+
+                return jsonify({"status": "ok"})
+            except Exception as e:
+                logger.error(f"Error processing heartbeat: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route("/api/applications/<app_id>/unregister", methods=["POST"])
+        def unregister_application(app_id):
+            """Explicitly unregister an application."""
+            try:
+                if app_id in self.applications:
+                    app_name = self.applications[app_id].get("name", app_id)
+                    del self.applications[app_id]
+                    logger.info(f"📱 Application unregistered: {app_name} ({app_id})")
+                    return jsonify({"status": "ok"})
+                else:
+                    return jsonify({"error": "app_id not found"}), 404
+            except Exception as e:
+                logger.error(f"Error unregistering application: {e}")
+                return jsonify({"error": str(e)}), 500
 
     def _setup_logging(self):
         """Setup centralized logging queue."""
@@ -612,6 +726,98 @@ class UnifiedDashboard:
                     logger.error(f"Ollama activity WebSocket error: {e}")
                     break
 
+        @self.sock.route('/ws/applications')
+        def ws_applications(ws):
+            """WebSocket endpoint for application lifecycle events (event-driven)."""
+            logger.info("🔌 Applications WebSocket connected")
+            previous_apps: Set[str] = set()
+
+            while True:
+                try:
+                    # Clean up stale applications
+                    self._cleanup_stale_applications()
+
+                    # Get current applications
+                    current_apps = set(self.applications.keys())
+
+                    # Detect new applications
+                    new_apps = current_apps - previous_apps
+                    for app_id in new_apps:
+                        app_info = self.applications[app_id]
+                        ws.send(json.dumps({
+                            "type": "app_registered",
+                            "timestamp": time.time(),
+                            "app_id": app_id,
+                            "name": app_info["name"],
+                            "router_type": app_info.get("router_type"),
+                            "message": f"📱 Application started: {app_info['name']} ({app_info.get('router_type')})"
+                        }))
+
+                    # Detect removed applications
+                    removed_apps = previous_apps - current_apps
+                    for app_id in removed_apps:
+                        ws.send(json.dumps({
+                            "type": "app_unregistered",
+                            "timestamp": time.time(),
+                            "app_id": app_id,
+                            "message": f"📱 Application stopped: {app_id}"
+                        }))
+
+                    # Detect status changes (active → stale)
+                    now = time.time()
+                    for app_id, app_info in self.applications.items():
+                        last_seen = now - app_info["last_heartbeat"]
+                        is_stale = last_seen > self.application_timeout
+
+                        # Store previous status
+                        if not hasattr(ws, '_app_status'):
+                            ws._app_status = {}
+                        prev_stale = ws._app_status.get(app_id, False)
+
+                        if is_stale and not prev_stale:
+                            ws.send(json.dumps({
+                                "type": "app_stale",
+                                "timestamp": time.time(),
+                                "app_id": app_id,
+                                "name": app_info["name"],
+                                "message": f"⚠️  Application not responding: {app_info['name']} (last seen {int(last_seen)}s ago)"
+                            }))
+
+                        ws._app_status[app_id] = is_stale
+
+                    previous_apps = current_apps
+
+                    # Heartbeat if no changes
+                    if len(new_apps) == 0 and len(removed_apps) == 0:
+                        if not hasattr(ws, '_last_heartbeat'):
+                            ws._last_heartbeat = 0
+                        if time.time() - ws._last_heartbeat >= 10:
+                            ws.send(json.dumps({
+                                "type": "heartbeat",
+                                "timestamp": time.time(),
+                                "apps_count": len(self.applications),
+                                "message": f"✓ Monitoring {len(self.applications)} applications"
+                            }))
+                            ws._last_heartbeat = time.time()
+
+                    time.sleep(2)
+
+                except Exception as e:
+                    logger.error(f"Applications WebSocket error: {e}")
+                    break
+
+    def _cleanup_stale_applications(self):
+        """Remove applications that haven't sent heartbeat recently."""
+        now = time.time()
+        stale_apps = [
+            app_id for app_id, app_info in self.applications.items()
+            if now - app_info["last_heartbeat"] > self.application_timeout * 2  # 2x timeout = remove
+        ]
+        for app_id in stale_apps:
+            app_name = self.applications[app_id].get("name", app_id)
+            logger.info(f"📱 Removing stale application: {app_name} ({app_id})")
+            del self.applications[app_id]
+
     def _calculate_analytics(self) -> Dict[str, Any]:
         """Calculate P50/P95/P99 latencies from history."""
         if not self.request_history:
@@ -700,8 +906,8 @@ UNIFIED_DASHBOARD_HTML = """
         }
         .container {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            grid-template-rows: auto 1fr 1fr;
+            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-rows: auto auto 1fr;
             gap: 1rem;
             padding: 1rem;
             height: calc(100vh - 120px);
@@ -819,6 +1025,21 @@ UNIFIED_DASHBOARD_HTML = """
             </div>
         </div>
 
+        <!-- Applications -->
+        <div class="dashboard-panel">
+            <div class="panel-header">
+                <span class="status-indicator status-active"></span>
+                Applications
+            </div>
+            <div class="panel-content">
+                <div id="applications-list" style="padding: 1rem; overflow: auto; height: 100%;">
+                    <div style="color: #94a3b8; text-align: center; padding: 2rem;">
+                        No applications registered yet
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Ray Dashboard -->
         <div class="dashboard-panel">
             <div class="panel-header">
@@ -876,6 +1097,40 @@ UNIFIED_DASHBOARD_HTML = """
                 const traces = await tracesRes.json();
                 document.getElementById('traces-json').textContent =
                     JSON.stringify(traces, null, 2);
+
+                // Applications
+                const appsRes = await fetch('/api/applications');
+                const appsData = await appsRes.json();
+                const appsList = document.getElementById('applications-list');
+
+                if (appsData.applications && appsData.applications.length > 0) {
+                    let html = '<table style="width: 100%; color: #e2e8f0; font-size: 0.85rem;">';
+                    html += '<thead><tr style="border-bottom: 1px solid #334155; text-align: left;">';
+                    html += '<th style="padding: 0.5rem;">Name</th>';
+                    html += '<th style="padding: 0.5rem;">Router</th>';
+                    html += '<th style="padding: 0.5rem;">Status</th>';
+                    html += '<th style="padding: 0.5rem;">Uptime</th>';
+                    html += '</tr></thead><tbody>';
+
+                    appsData.applications.forEach(app => {
+                        const statusColor = app.status === 'active' ? '#10b981' : '#f59e0b';
+                        const statusIcon = app.status === 'active' ? '✅' : '⚠️';
+                        const uptimeMin = Math.floor(app.uptime_seconds / 60);
+                        const uptimeSec = app.uptime_seconds % 60;
+
+                        html += '<tr style="border-bottom: 1px solid #1e293b;">';
+                        html += `<td style="padding: 0.5rem;">${app.name}</td>`;
+                        html += `<td style="padding: 0.5rem; color: #a78bfa;">${app.router_type}</td>`;
+                        html += `<td style="padding: 0.5rem; color: ${statusColor};">${statusIcon} ${app.status}</td>`;
+                        html += `<td style="padding: 0.5rem;">${uptimeMin}m ${uptimeSec}s</td>`;
+                        html += '</tr>';
+                    });
+
+                    html += '</tbody></table>';
+                    appsList.innerHTML = html;
+                } else {
+                    appsList.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem;">No applications registered yet</div>';
+                }
 
                 // Check Ray status
                 try {
