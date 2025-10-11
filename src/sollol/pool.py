@@ -31,6 +31,7 @@ from .network_observer import (
     log_node_health_check,
     log_node_status_change,
 )
+from .routing_logger import get_routing_logger
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,9 @@ class OllamaPool:
         # Initialize intelligent routing
         self.enable_intelligent_routing = enable_intelligent_routing
         self.router = get_router() if enable_intelligent_routing else None
+
+        # Initialize routing event logger (separate channel from regular logs)
+        self.routing_logger = get_routing_logger()
 
         # Initialize health monitoring (FlockParser pattern)
         self.health_monitor = NodeHealthMonitor()
@@ -330,6 +334,17 @@ class OllamaPool:
                     if node_key == selected_host:
                         # Log the routing decision
                         logger.info(f"🎯 Intelligent routing: {decision['reasoning']}")
+
+                        # Log to SOLLOL routing stream (separate from regular logs)
+                        model = payload.get('model', 'unknown') if payload else 'unknown'
+                        node_url = f"{node['host']}:{node['port']}"
+                        self.routing_logger.log_ollama_node_selected(
+                            node_url=node_url,
+                            model=model,
+                            reason=decision['reasoning'],
+                            confidence=decision.get('confidence', 0),
+                            priority=priority
+                        )
                         return node, decision
 
                 # Fallback if not found

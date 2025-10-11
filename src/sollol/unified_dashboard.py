@@ -1528,6 +1528,21 @@ UNIFIED_DASHBOARD_HTML = """
             </div>
         </div>
 
+        <!-- SOLLOL Routing Events -->
+        <div class="dashboard-panel full-height">
+            <div class="panel-header">
+                <span class="status-indicator status-active"></span>
+                🎯 SOLLOL Routing Decisions
+            </div>
+            <div class="panel-content">
+                <div id="routing-events" style="padding: 1rem; overflow: auto; height: 100%; font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.4; background: #0f172a;">
+                    <div style="color: #94a3b8; text-align: center; padding: 2rem;">
+                        Connecting to SOLLOL routing stream...
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Ray Dashboard -->
         <div class="dashboard-panel full-height">
             <div class="panel-header">
@@ -1889,6 +1904,74 @@ UNIFIED_DASHBOARD_HTML = """
             rpcWs.onclose = () => {
                 setTimeout(() => {
                     rpcActivity.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
+                    connectActivityLogs();
+                }, 5000);
+            };
+
+            // SOLLOL Routing Events WebSocket
+            const routingWs = new WebSocket(`${wsProtocol}//${wsHost}/ws/routing_events`);
+            const routingEvents = document.getElementById('routing-events');
+
+            routingWs.onopen = () => {
+                // Don't clear the div - let the first WebSocket message display connection status
+            };
+
+            routingWs.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    // Clear initial "Connecting..." message on first real message
+                    if (routingEvents.querySelector('div[style*="text-align: center"]')) {
+                        routingEvents.innerHTML = '';
+                    }
+
+                    const entry = document.createElement('div');
+                    entry.style.padding = '0.25rem 0';
+                    entry.style.borderBottom = '1px solid #1e293b';
+                    entry.style.fontSize = '0.875rem';
+
+                    // Style based on event type
+                    const eventType = data.event_type;
+                    if (data.type === 'connected') {
+                        entry.style.color = '#10b981';
+                        entry.style.padding = '0.5rem';
+                        entry.style.borderBottom = 'none';
+                    } else if (eventType === 'ROUTE_DECISION') {
+                        entry.style.color = '#22d3ee'; // cyan
+                    } else if (eventType === 'FALLBACK_TRIGGERED') {
+                        entry.style.color = '#f59e0b'; // yellow
+                    } else if (eventType === 'COORDINATOR_START') {
+                        entry.style.color = '#10b981'; // green
+                    } else if (eventType === 'COORDINATOR_STOP') {
+                        entry.style.color = '#ef4444'; // red
+                    } else if (eventType === 'CACHE_HIT') {
+                        entry.style.color = '#60a5fa'; // blue
+                    } else {
+                        entry.style.color = '#e2e8f0'; // default
+                    }
+
+                    entry.textContent = data.message || event.data;
+                    routingEvents.appendChild(entry);
+
+                    // Auto-scroll to bottom
+                    routingEvents.scrollTop = routingEvents.scrollHeight;
+
+                    // Keep only last 100 entries to prevent memory issues
+                    while (routingEvents.children.length > 100) {
+                        routingEvents.removeChild(routingEvents.firstChild);
+                    }
+                } catch(e) {
+                    console.error('Failed to parse routing WebSocket message:', e);
+                }
+            };
+
+            routingWs.onerror = () => {
+                routingEvents.innerHTML = '<div style="color: #ef4444; padding: 0.5rem;">✗ Connection error</div>';
+            };
+
+            routingWs.onclose = () => {
+                setTimeout(() => {
+                    routingEvents.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
                     connectActivityLogs();
                 }, 5000);
             };

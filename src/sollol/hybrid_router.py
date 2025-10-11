@@ -26,6 +26,7 @@ from .llama_cpp_coordinator import LlamaCppCoordinator, RPCBackend
 from .ollama_gguf_resolver import OllamaGGUFResolver
 from .pool import OllamaPool
 from .rpc_registry import RPCBackendRegistry
+from .routing_logger import get_routing_logger
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +169,9 @@ class HybridRouter:
         # GGUF resolver for extracting models from Ollama storage
         self.gguf_resolver = OllamaGGUFResolver()
 
+        # Initialize routing event logger
+        self.routing_logger = get_routing_logger()
+
         # Log initialization status
         rpc_info = ""
         if self.enable_distributed:
@@ -234,6 +238,12 @@ class HybridRouter:
             logger.info(
                 f"Stopping coordinator (switching from {self.coordinator_model} to {model})"
             )
+            self.routing_logger.log_model_switch(
+                from_model=self.coordinator_model,
+                to_model=model,
+                backend="llamacpp"
+            )
+            self.routing_logger.log_coordinator_stop(model=self.coordinator_model)
             await self.coordinator.stop()
             self.coordinator = None
 
@@ -262,6 +272,12 @@ class HybridRouter:
                 logger.info(
                     f"✅ Coordinator started with {len(backends)} RPC backends "
                     f"on {self.coordinator_host}:{self.coordinator_port}"
+                )
+                self.routing_logger.log_coordinator_start(
+                    model=model,
+                    rpc_backends=len(backends),
+                    coordinator_host=self.coordinator_host,
+                    coordinator_port=self.coordinator_port
                 )
             except Exception as e:
                 # Startup failed - clean up the failed coordinator
@@ -385,9 +401,21 @@ class HybridRouter:
             use_rpc = self.routing_cache[model]
             if use_rpc:
                 logger.info(f"🔗 Routing '{model}' to RPC (cached decision)")
+                self.routing_logger.log_route_decision(
+                    model=model,
+                    backend="rpc",
+                    reason="cached_routing_decision",
+                    cached=True
+                )
                 return await self._route_to_llamacpp(model, messages, **kwargs)
             else:
                 logger.info(f"📡 Routing '{model}' to Ollama (cached decision)")
+                self.routing_logger.log_route_decision(
+                    model=model,
+                    backend="ollama",
+                    reason="cached_routing_decision",
+                    cached=True
+                )
                 return await self._route_to_ollama(model, messages, **kwargs)
 
         # No cached decision - check resources proactively
@@ -399,6 +427,13 @@ class HybridRouter:
                 # Resources sufficient - try Ollama
                 try:
                     logger.info(f"📡 Routing '{model}' to Ollama pool (sufficient resources)")
+                    profile = self._get_model_profile(model)
+                    self.routing_logger.log_route_decision(
+                        model=model,
+                        backend="ollama",
+                        reason=f"sufficient_resources (estimated {profile.estimated_memory_gb:.1f}GB)",
+                        parameter_count=profile.parameter_count
+                    )
                     result = await self._route_to_ollama(model, messages, **kwargs)
                     # Success! Cache this decision
                     self.routing_cache[model] = False
@@ -410,6 +445,12 @@ class HybridRouter:
                             f"⚠️  Ollama failed unexpectedly for '{model}': {str(e)[:100]}"
                         )
                         logger.info(f"🔗 Falling back to RPC model sharding...")
+                        self.routing_logger.log_fallback(
+                            model=model,
+                            from_backend="ollama",
+                            to_backend="rpc",
+                            reason=f"ollama_error: {str(e)[:100]}"
+                        )
                         result = await self._route_to_llamacpp(model, messages, **kwargs)
                         self.routing_cache[model] = True
                         return result
@@ -419,6 +460,13 @@ class HybridRouter:
                 # Insufficient resources - use RPC if available
                 if self.enable_distributed:
                     logger.info(f"🔗 Routing '{model}' to RPC (insufficient Ollama resources)")
+                    profile = self._get_model_profile(model)
+                    self.routing_logger.log_route_decision(
+                        model=model,
+                        backend="rpc",
+                        reason=f"insufficient_ollama_resources (requires {profile.estimated_memory_gb:.1f}GB)",
+                        parameter_count=profile.parameter_count
+                    )
                     result = await self._route_to_llamacpp(model, messages, **kwargs)
                     self.routing_cache[model] = True
                     return result
@@ -434,6 +482,11 @@ class HybridRouter:
         # No Ollama pool available - use RPC directly
         if self.enable_distributed:
             logger.info(f"🔗 Routing '{model}' to RPC (no Ollama pool)")
+            self.routing_logger.log_route_decision(
+                model=model,
+                backend="rpc",
+                reason="no_ollama_pool_available"
+            )
             result = await self._route_to_llamacpp(model, messages, **kwargs)
             self.routing_cache[model] = True
             return result

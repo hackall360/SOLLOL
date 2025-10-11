@@ -709,6 +709,85 @@ class DashboardService:
                 pubsub.close()
                 pubsub_client.close()
 
+        @self.sock.route("/ws/routing_events")
+        def ws_routing_events(ws):
+            """WebSocket endpoint for SOLLOL routing decisions - subscribes to Redis pub/sub."""
+            logger.info("🔌 Routing events WebSocket connected")
+
+            # Create separate Redis connection for pub/sub
+            import redis as redis_module
+            pubsub_client = redis_module.from_url(self.redis_url, decode_responses=True)
+            pubsub = pubsub_client.pubsub()
+
+            try:
+                # Subscribe to routing events channel
+                pubsub.subscribe("sollol:routing_events")
+
+                # Send initial connected message
+                ws.send(json.dumps({
+                    "type": "connected",
+                    "timestamp": time.time(),
+                    "message": "✓ Connected to SOLLOL routing stream"
+                }))
+                logger.info("✅ Sent routing events WebSocket connected message")
+
+                # Non-blocking message polling loop
+                logger.info("🔄 Starting routing events message polling loop")
+                while True:
+                    message = pubsub.get_message(timeout=0.1)
+                    if message and message['type'] == 'message':
+                        # Forward Redis message to WebSocket
+                        routing_event = json.loads(message['data'])
+                        logger.debug(f"Received routing event: {routing_event}")
+
+                        # Format for display
+                        event_type = routing_event.get('event_type', 'unknown')
+                        model = routing_event.get('model', 'N/A')
+                        backend = routing_event.get('backend', 'N/A')
+                        reason = routing_event.get('reason', '')
+                        instance_id = routing_event.get('instance_id', 'unknown')
+
+                        # Create display message based on event type
+                        if event_type == 'ROUTE_DECISION':
+                            display_msg = f"🎯 {model} → {backend} | {reason}"
+                        elif event_type == 'CACHE_HIT':
+                            display_msg = f"💾 {model} → {backend} (cached)"
+                        elif event_type == 'FALLBACK_TRIGGERED':
+                            from_backend = routing_event.get('from_backend', '?')
+                            display_msg = f"⚠️  {model}: {from_backend} → {backend} | {reason}"
+                        elif event_type == 'COORDINATOR_START':
+                            rpc_count = routing_event.get('rpc_backends', 0)
+                            display_msg = f"🚀 Coordinator started: {model} ({rpc_count} RPC backends)"
+                        elif event_type == 'COORDINATOR_STOP':
+                            display_msg = f"⏹️  Coordinator stopped: {model}"
+                        elif event_type == 'OLLAMA_NODE_SELECTED':
+                            node_url = routing_event.get('node_url', 'unknown')
+                            display_msg = f"📡 {model} → {node_url} | {reason}"
+                        else:
+                            display_msg = f"{event_type}: {model} → {backend}"
+
+                        payload = json.dumps({
+                            "type": "routing_event",
+                            "event_type": event_type,
+                            "timestamp": routing_event.get('timestamp', time.time()),
+                            "instance_id": instance_id,
+                            "model": model,
+                            "backend": backend,
+                            "reason": reason,
+                            "message": display_msg,
+                            "full_event": routing_event
+                        })
+                        logger.debug(f"📤 Sending routing event WebSocket message: {display_msg}")
+                        ws.send(payload)
+
+                    time.sleep(0.1)  # Small delay to prevent busy-waiting
+
+            except Exception as e:
+                logger.error(f"Routing events WebSocket error: {e}")
+            finally:
+                pubsub.close()
+                pubsub_client.close()
+
         # Add missing WebSocket endpoints expected by unified_dashboard HTML
         @self.sock.route("/ws/network/nodes")
         def ws_network_nodes(ws):
