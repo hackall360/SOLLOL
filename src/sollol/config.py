@@ -72,6 +72,22 @@ class SOLLOLConfig:
     adaptive_metrics_interval: int = 30
     """Seconds between adaptive metrics updates"""
 
+    # InfluxDB time-series metrics configuration
+    influxdb_enabled: bool = True
+    """Enable InfluxDB time-series metrics logging (requires influxdb-client)"""
+
+    influxdb_url: str = "http://localhost:8086"
+    """InfluxDB server URL"""
+
+    influxdb_token: Optional[str] = None
+    """InfluxDB authentication token (required if influxdb_enabled=True)"""
+
+    influxdb_org: str = "sollol"
+    """InfluxDB organization name"""
+
+    influxdb_bucket: str = "sollol_metrics"
+    """InfluxDB bucket name for storing metrics"""
+
     # Health check configuration
     health_check_enabled: bool = True
     """Enable periodic health checks for OLLOL hosts"""
@@ -139,6 +155,11 @@ class SOLLOLConfig:
             "metrics_port": self.metrics_port,
             "adaptive_metrics_enabled": self.adaptive_metrics_enabled,
             "adaptive_metrics_interval": self.adaptive_metrics_interval,
+            "influxdb_enabled": self.influxdb_enabled,
+            "influxdb_url": self.influxdb_url,
+            "influxdb_token": self.influxdb_token,
+            "influxdb_org": self.influxdb_org,
+            "influxdb_bucket": self.influxdb_bucket,
             "log_level": self.log_level,
         }
 

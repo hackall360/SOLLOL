@@ -120,6 +120,19 @@ sollol.start()  # ✅ Gateway running on :8000
 
 ---
 
+### 4. **Unified Observability for Your Entire AI Network**
+
+SOLLOL provides a **single pane of glass** to monitor every application and every node in your distributed AI network.
+
+- ✅ **Centralized Dashboard**: One web interface shows all applications, nodes, and RPC backends.
+- ✅ **Multi-App Tracking**: See which applications (e.g., SynapticLlamas, custom agents) are using the cluster in real-time.
+- ✅ **Network-Wide Visibility**: The dashboard runs as a persistent service, discovering and monitoring all components even if no applications are running.
+- ✅ **Zero-Config**: Applications automatically appear in the dashboard with no extra code required.
+
+This moves beyond per-application monitoring to provide true, centralized observability for your entire infrastructure.
+
+---
+
 ## 🏗️ Architecture
 
 ### High-Level Overview
@@ -805,6 +818,238 @@ response = pool.chat(
 
 ### Observability & Monitoring
 
+#### **Zero-Config Auto-Registration** 🎯
+
+SOLLOL provides **automatic observability** with zero configuration required. All applications automatically register with the dashboard when they create an `OllamaPool`:
+
+```python
+from sollol import OllamaPool
+
+# Creates pool AND auto-registers with dashboard (if running)
+pool = OllamaPool.auto_configure()
+# ✅ Application automatically appears in dashboard at http://localhost:8080
+```
+
+**How it works:**
+1. `OllamaPool` automatically detects if a dashboard is running on port 8080
+2. Auto-discovers RPC backends and Ollama nodes
+3. Registers application with metadata (node count, GPU info, etc.)
+4. Sends periodic heartbeats to maintain "alive" status
+5. No manual `DashboardClient` setup needed!
+
+**Architecture:**
+- **ONE persistent dashboard service** runs independently
+- **Multiple applications** (SynapticLlamas, FlockParser, etc.) auto-register
+- **Dashboard survives** application exits
+- **Zero-config** auto-discovery of nodes and RPC backends
+
+#### **Custom Application Names** 🏷️
+
+By default, applications register as "OllamaPool (hostname)". To give your application a custom name in the dashboard:
+
+```python
+from sollol import OllamaPool
+
+# Register with custom application name
+pool = OllamaPool(
+    nodes=[{"host": "localhost", "port": 11434}],
+    enable_intelligent_routing=True,
+    app_name="MyApplication"  # Shows as "MyApplication" in dashboard
+)
+```
+
+**Example - Multi-application setup:**
+
+```python
+# Application 1: FlockParser
+from sollol import OllamaPool
+
+pool = OllamaPool.auto_configure(app_name="FlockParser")
+# Dashboard shows: "FlockParser"
+
+# Application 2: SynapticLlamas
+from sollol.dashboard_client import DashboardClient
+
+dashboard_client = DashboardClient(
+    app_name="SynapticLlamas",
+    router_type="IntelligentRouter",
+    version="1.0.0",
+    dashboard_url="http://localhost:8080",
+    metadata={"agents": 3, "distributed": True},
+    auto_register=True
+)
+# Dashboard shows: "SynapticLlamas"
+```
+
+**Why use custom names?**
+- Distinguish between multiple applications using SOLLOL
+- Better visibility in multi-tenant environments
+- Easier debugging and monitoring
+- Professional dashboard presentation
+
+#### **Manual/Programmatic Registration** 🔧
+
+For applications that don't use `OllamaPool` or need custom registration logic, use `DashboardClient` directly:
+
+```python
+from sollol.dashboard_client import DashboardClient
+
+# Create dashboard client with custom metadata
+dashboard_client = DashboardClient(
+    app_name="CustomApplication",
+    router_type="CustomRouter",  # Or "OllamaPool", "HybridRouter", etc.
+    version="1.0.0",
+    dashboard_url="http://localhost:8080",
+    metadata={
+        # Custom metadata shown in dashboard
+        "nodes": 5,
+        "distributed": True,
+        "custom_field": "value"
+    },
+    auto_register=True  # Registers immediately
+)
+
+# Dashboard client automatically sends heartbeats every 5 seconds
+# to keep application status as "active"
+
+# When application exits, clean up:
+dashboard_client.close()  # Stops heartbeat thread
+```
+
+**Advanced: Custom Heartbeat Logic**
+
+```python
+from sollol.dashboard_client import DashboardClient
+import time
+
+# Create client without auto-registration
+dashboard_client = DashboardClient(
+    app_name="BackgroundWorker",
+    router_type="WorkerPool",
+    version="2.0.0",
+    dashboard_url="http://localhost:8080",
+    metadata={"worker_count": 10},
+    auto_register=False  # Don't register yet
+)
+
+# Register when ready
+dashboard_client.register()
+
+# Update metadata dynamically
+dashboard_client.update_metadata({"worker_count": 15, "status": "processing"})
+
+# Send manual heartbeat
+dashboard_client.heartbeat()
+
+# Application logic here...
+time.sleep(60)
+
+# Deregister when done
+dashboard_client.deregister()
+dashboard_client.close()
+```
+
+**Use cases for manual registration:**
+- Custom routers or load balancers
+- Background workers or daemons
+- Applications that need dynamic metadata updates
+- Testing and debugging
+- Applications without OllamaPool
+
+#### **Registration Methods Comparison** 📊
+
+| Method | Use Case | Complexity | Customization |
+|--------|----------|------------|---------------|
+| **Auto-registration** | Standard SOLLOL applications | ✅ Zero config | Limited (app_name only) |
+| **Custom app_name** | Multiple apps, better naming | ✅ One parameter | App name |
+| **Manual DashboardClient** | Custom applications | ⚠️ More code | Full control |
+
+**Quick decision guide:**
+- Using `OllamaPool`? → Use `app_name` parameter
+- Need custom metadata? → Use `DashboardClient` directly
+- Need dynamic updates? → Use `DashboardClient` with manual heartbeats
+- Just want it to work? → Use auto-registration (default)
+
+#### **Persistent Dashboard Service**
+
+Start the persistent dashboard once (survives application exits):
+
+```bash
+# Start dashboard service (runs until stopped)
+python3 -m sollol.dashboard_service --port 8080 --redis-url redis://localhost:6379
+
+# Or run in background
+nohup python3 -m sollol.dashboard_service --port 8080 --redis-url redis://localhost:6379 > /tmp/dashboard_service.log 2>&1 &
+```
+
+**Features:**
+- 📊 **Real-time metrics**: System status, latency, success rate, GPU memory, Ray workers
+- 📜 **Live log streaming**: WebSocket-based log tailing (via Redis pub/sub)
+- 🌐 **Activity monitoring**: Ollama server and llama.cpp RPC activity
+- 🔷 **Embedded Ray dashboard**: Task-level distributed tracing
+- 📈 **Embedded Dask dashboard**: Performance profiling and task graphs
+- 🔍 **Auto-discovery**: Automatically discovers Ollama nodes and RPC backends when no router context
+
+#### **Embedded Dashboard (Alternative)**
+
+Applications can also start their own embedded dashboards:
+
+```python
+from sollol import run_unified_dashboard
+import threading
+
+# Start embedded dashboard with router context
+dashboard_thread = threading.Thread(
+    target=run_unified_dashboard,
+    kwargs={
+        "router": pool,  # Provides node/backend context
+        "dashboard_port": 8080,
+        "host": "0.0.0.0",
+        "enable_dask": False
+    },
+    daemon=True
+)
+dashboard_thread.start()
+```
+
+**Environment Variables** (configure before initializing):
+
+```bash
+# Disable dashboard (default: true)
+export SOLLOL_DASHBOARD=false
+
+# Change dashboard port (default: 8080)
+export SOLLOL_DASHBOARD_PORT=9090
+
+# Disable Dask dashboard integration (default: true)
+export SOLLOL_DASHBOARD_DASK=false
+```
+
+#### **Multi-Application Pattern** ✨
+
+The persistent dashboard service enables multiple applications to share observability:
+
+```bash
+# Terminal 1: Start persistent dashboard
+python3 -m sollol.dashboard_service --port 8080 --redis-url redis://localhost:6379
+
+# Terminal 2: Start application 1
+python my_app1.py  # Auto-registers with dashboard
+
+# Terminal 3: Start application 2
+python my_app2.py  # Also auto-registers
+
+# Visit http://localhost:8080 to see both applications!
+```
+
+**Benefits:**
+- Single dashboard for all SOLLOL-based applications
+- Dashboard stays running when applications exit
+- Aggregated logs from all applications (via Redis pub/sub)
+- Centralized observability for distributed systems
+
+#### **Programmatic Stats Access**
+
 ```python
 # Get detailed stats
 stats = pool.get_stats()
@@ -816,6 +1061,8 @@ print(f"Success rate: {stats['success_rate']:.2%}")
 for host, metrics in stats['hosts'].items():
     print(f"{host}: {metrics['latency_ms']}ms, {metrics['success_rate']:.2%}")
 ```
+
+#### **Prometheus Metrics**
 
 ```bash
 # Prometheus metrics endpoint

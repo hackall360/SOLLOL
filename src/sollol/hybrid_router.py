@@ -180,6 +180,20 @@ class HybridRouter:
             f"{rpc_info}"
         )
 
+        # Auto-start observability dashboard (configurable via ENV)
+        import os
+        self.dashboard = None
+        self.dashboard_enabled = os.getenv("SOLLOL_DASHBOARD", "true").lower() in ("true", "1", "yes", "on")
+        self.dashboard_port = int(os.getenv("SOLLOL_DASHBOARD_PORT", "8080"))
+        self.dashboard_enable_dask = os.getenv("SOLLOL_DASHBOARD_DASK", "true").lower() in ("true", "1", "yes", "on")
+
+        if self.dashboard_enabled:
+            self._start_dashboard()
+        else:
+            msg = "📊 Dashboard disabled via SOLLOL_DASHBOARD=false"
+            logger.info(msg)
+            print(msg)
+
     async def _ensure_coordinator_for_model(self, model: str):
         """
         Ensure coordinator is started with the correct model.
@@ -559,3 +573,66 @@ class HybridRouter:
             stats["model_sharding"]["rpc_backends"] = len(self.coordinator.rpc_backends)
 
         return stats
+
+    def _start_dashboard(self):
+        """
+        Start the unified observability dashboard in a background thread.
+
+        The dashboard provides real-time monitoring via WebSockets:
+        - System metrics (hosts, latency, success rate, GPU memory, Ray workers)
+        - Real-time logs streaming
+        - Ollama server activity monitoring
+        - llama.cpp RPC activity monitoring
+        - Embedded Ray dashboard iframe
+        - Embedded Dask dashboard iframe
+
+        Configured via environment variables:
+        - SOLLOL_DASHBOARD=true|false (default: true)
+        - SOLLOL_DASHBOARD_PORT=8080 (default: 8080)
+        - SOLLOL_DASHBOARD_DASK=true|false (default: true)
+        """
+        try:
+            from .dashboard_launcher import launch_dashboard_subprocess
+            from .dashboard_log_hooks import install_log_hook_main
+
+            # Get Redis URL from environment
+            redis_url = os.getenv("SOLLOL_REDIS_URL", "redis://localhost:6379")
+
+            msg = f"🚀 Launching SOLLOL Dashboard subprocess on port {self.dashboard_port}..."
+            logger.info(msg)
+            print(msg)
+
+            # Launch dashboard as subprocess
+            self.dashboard = launch_dashboard_subprocess(
+                redis_url=redis_url,
+                port=self.dashboard_port,
+                ray_dashboard_port=8265,
+                dask_dashboard_port=8787,
+                enable_dask=self.dashboard_enable_dask,
+                debug=False,
+            )
+
+            # Install log hooks in main process
+            install_log_hook_main(redis_url)
+
+            msg1 = "✅ SOLLOL Dashboard launched successfully"
+            msg2 = f"   📊 Access at http://localhost:{self.dashboard_port}"
+            msg3 = f"   📡 Using Redis at {redis_url}"
+            msg4 = f"   🔧 Disable with: SOLLOL_DASHBOARD=false"
+
+            logger.info(msg1)
+            logger.info(msg2)
+            logger.info(msg3)
+            logger.info(msg4)
+            print(msg1)
+            print(msg2)
+            print(msg3)
+            print(msg4)
+
+        except Exception as e:
+            err_msg = f"⚠️  Failed to start dashboard: {e}"
+            info_msg = "   Dashboard can be started manually: python -m sollol.dashboard_service"
+            logger.warning(err_msg)
+            logger.info(info_msg)
+            print(err_msg)
+            print(info_msg)

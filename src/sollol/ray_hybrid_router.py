@@ -10,7 +10,14 @@ Architecture:
 - Ray handles load balancing, queuing, and fault tolerance automatically
 """
 
+# Set Bokeh session token expiration BEFORE any imports
+# This prevents "Token is expired" errors on Dask dashboard
+import os
+os.environ['BOKEH_SESSION_TOKEN_EXPIRATION'] = '2147483647'  # Max int32 (~24 days)
+os.environ['BOKEH_ALLOW_WS_ORIGIN'] = '*'
+
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -217,28 +224,37 @@ class RayHybridRouter:
         # Initialize Ray with dashboard enabled (for Ollama pool parallelization even without RPC)
         if self.enable_distributed:
             if not ray.is_initialized():
-                logger.info("🚀 Initializing Ray for distributed RPC coordination")
-
-                # Set Ray OOM threshold to 95% to prevent premature kills
                 import os
-                os.environ['RAY_memory_usage_threshold'] = '0.95'
+                # Disable Ray memory monitor
+                os.environ['RAY_memory_monitor_refresh_ms'] = '0'
 
-                ray.init(
-                    ignore_reinit_error=True,
-                    dashboard_host="0.0.0.0",
-                    dashboard_port=8265,
-                    include_dashboard=True,
-                    # Ultra-minimal memory limits for CLI apps
-                    object_store_memory=128 * 1024 * 1024,  # 128MB object store (ultra-minimal)
-                    _memory=512 * 1024 * 1024,  # 512MB total per worker (reduced from 1GB)
-                    num_cpus=1,  # Single CPU to minimize workers
-                    _system_config={
-                        "automatic_object_spilling_enabled": True,  # Spill to disk instead of OOM
-                        "max_io_workers": 1,  # Minimal I/O workers
-                        "object_spilling_threshold": 0.5,  # Spill early at 50%
-                    },
-                )
-                logger.info("📊 Ray dashboard available at http://localhost:8265")
+                # Try to connect to existing Ray cluster first (multi-app coordination)
+                try:
+                    logger.info("🔍 Attempting to connect to existing Ray cluster...")
+                    ray.init(address='auto', ignore_reinit_error=True)
+                    logger.info("✅ Connected to existing Ray cluster")
+                except (ConnectionError, Exception) as e:
+                    # No existing cluster, start a new one
+                    logger.info(f"🚀 Starting new Ray cluster for distributed coordination (no existing cluster found)")
+
+                    import json
+                    # Conservative memory settings to avoid "insufficient memory" errors
+                    ray.init(
+                        ignore_reinit_error=True,
+                        dashboard_host="0.0.0.0",
+                        dashboard_port=8265,
+                        include_dashboard=True,
+                        num_cpus=1,  # Single CPU to minimize workers
+                        object_store_memory=256 * 1024 * 1024,  # 256MB for object store
+                        _system_config={
+                            "automatic_object_spilling_enabled": True,
+                            "object_spilling_config": json.dumps({
+                                "type": "filesystem",
+                                "params": {"directory_path": "/tmp/ray_spill"}
+                            })
+                        }
+                    )
+                    logger.info("📊 Ray dashboard available at http://localhost:8265")
 
             # Only create RPC pools if we have backends
             if self.has_rpc_backends:
@@ -295,6 +311,39 @@ class RayHybridRouter:
             logger.info("ℹ️  RayHybridRouter initialized without distributed support")
             self.pools = []
             self.num_pools = 0
+
+        # Auto-start observability dashboard (configurable via ENV)
+        import os
+        self.dashboard = None
+        self.dashboard_enabled = os.getenv("SOLLOL_DASHBOARD", "true").lower() in ("true", "1", "yes", "on")
+        self.dashboard_port = int(os.getenv("SOLLOL_DASHBOARD_PORT", "8080"))
+        self.dashboard_enable_dask = os.getenv("SOLLOL_DASHBOARD_DASK", "true").lower() in ("true", "1", "yes", "on")
+
+        # Initialize Dask client for dashboard if enabled
+        self.dask_client = None
+        if self.dashboard_enable_dask:
+            try:
+                from dask.distributed import Client
+                # Try to connect to existing Dask scheduler first (multi-app coordination)
+                try:
+                    logger.info("🔍 Attempting to connect to existing Dask scheduler...")
+                    self.dask_client = Client("tcp://127.0.0.1:8786", timeout=2)
+                    logger.info(f"✅ Connected to existing Dask scheduler")
+                except Exception as e:
+                    # No existing scheduler, create local cluster
+                    logger.info("🚀 Starting Dask client with local cluster (no existing scheduler found)")
+                    self.dask_client = Client(processes=False, dashboard_address=':8787', silence_logs=logging.WARNING)
+                    logger.info(f"✅ Dask client initialized for dashboard observability at {self.dask_client.dashboard_link}")
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to initialize Dask client for dashboard: {e}")
+                self.dashboard_enable_dask = False
+
+        if self.dashboard_enabled:
+            self._start_dashboard()
+        else:
+            msg = "📊 Dashboard disabled via SOLLOL_DASHBOARD=false"
+            logger.info(msg)
+            print(msg)
 
     async def route_request(
         self,
@@ -369,8 +418,9 @@ class RayHybridRouter:
                 pool.load_model.remote(model, gguf_path)
                 for pool in self.pools
             ]
+            # Use ray.get directly in gather (it's async-compatible)
             results = await asyncio.gather(*[
-                asyncio.wrap_future(ray.get(task, timeout=60))
+                asyncio.to_thread(ray.get, task, timeout=60)
                 for task in load_tasks
             ])
 
@@ -387,8 +437,9 @@ class RayHybridRouter:
         pool = self.pools[hash(str(messages)) % len(self.pools)]
 
         # Execute inference (Ray handles queuing if pool is busy)
-        response_future = pool.chat.remote(messages, stream=stream, **kwargs)
-        response = await asyncio.wrap_future(ray.get(response_future))
+        response_ref = pool.chat.remote(messages, stream=stream, **kwargs)
+        # Use asyncio.to_thread for ray.get to avoid blocking
+        response = await asyncio.to_thread(ray.get, response_ref)
 
         return response
 
@@ -441,3 +492,123 @@ class RayHybridRouter:
         }
 
         return stats
+
+    def _start_dashboard(self):
+        """
+        Start the standalone observability dashboard as a subprocess.
+
+        The dashboard provides real-time monitoring via WebSockets:
+        - System metrics (hosts, latency, success rate, GPU memory, Ray workers)
+        - Real-time logs streaming (via Redis pub/sub)
+        - Ollama server activity monitoring
+        - llama.cpp RPC activity monitoring
+        - Embedded Ray dashboard iframe
+        - Embedded Dask dashboard iframe
+
+        Configured via environment variables:
+        - SOLLOL_DASHBOARD=true|false (default: true)
+        - SOLLOL_DASHBOARD_PORT=8080 (default: 8080)
+        - SOLLOL_DASHBOARD_DASK=true|false (default: true)
+        - SOLLOL_REDIS_URL=redis://localhost:6379 (default)
+        """
+        try:
+            from .dashboard_launcher import launch_dashboard_subprocess
+            from .dashboard_log_hooks import install_log_hook_main, auto_install_hooks
+
+            # Get Redis URL from environment or coordinator
+            redis_url = os.getenv("SOLLOL_REDIS_URL", "redis://localhost:6379")
+            if hasattr(self, "coordinator") and self.coordinator:
+                # Use same Redis as coordinator
+                redis_url = getattr(self.coordinator, "redis_url", redis_url)
+
+            msg = f"🚀 Launching SOLLOL Dashboard subprocess on port {self.dashboard_port}..."
+            logger.info(msg)
+            print(msg)
+
+            # Launch dashboard as subprocess
+            self.dashboard = launch_dashboard_subprocess(
+                redis_url=redis_url,
+                port=self.dashboard_port,
+                ray_dashboard_port=8265,
+                dask_dashboard_port=8787,
+                enable_dask=self.dashboard_enable_dask,
+                debug=False,
+            )
+
+            # Install log hooks in main process
+            try:
+                hook_result = install_log_hook_main(redis_url)
+                if hook_result:
+                    logger.info(f"✅ Main process log hook installed -> {redis_url}")
+                    print(f"✅ Main process log hook installed -> {redis_url}")
+                else:
+                    logger.warning("⚠️  Main process log hook installation returned False")
+                    print("⚠️  Main process log hook installation returned False")
+            except Exception as e:
+                logger.error(f"❌ Failed to install main process log hook: {e}")
+                print(f"❌ Failed to install main process log hook: {e}")
+
+            # Auto-install hooks on Ray/Dask workers
+            try:
+                ray_ref = self.ray if hasattr(self, "ray") else None
+                dask_client = self.dask_client if hasattr(self, "dask_client") else None
+                hook_results = auto_install_hooks(
+                    redis_url=redis_url,
+                    ray_ref=ray_ref,
+                    dask_client=dask_client,
+                )
+                logger.info(f"📡 Log hooks installed: {hook_results}")
+            except Exception as e:
+                logger.warning(f"Failed to auto-install worker hooks: {e}")
+
+            # Publish router metadata to Redis for dashboard
+            try:
+                import redis
+                import json
+                r = redis.from_url(redis_url, decode_responses=True)
+
+                # Get nodes from ollama_pool
+                nodes_list = []
+                if hasattr(self, "ollama_pool") and hasattr(self.ollama_pool, "nodes"):
+                    nodes_list = list(self.ollama_pool.nodes)
+
+                # Get RPC backends
+                rpc_list = []
+                if hasattr(self, "rpc_backends") and self.rpc_backends:
+                    for b in self.rpc_backends:
+                        if isinstance(b, dict):
+                            rpc_list.append({"host": b.get("host"), "port": b.get("port")})
+                        else:
+                            rpc_list.append({"host": getattr(b, "host", ""), "port": getattr(b, "port", "")})
+
+                router_metadata = {
+                    "nodes": nodes_list,
+                    "rpc_backends": rpc_list,
+                    "metrics": self.get_stats() if hasattr(self, "get_stats") else {},
+                }
+                r.set("sollol:router:metadata", json.dumps(router_metadata), ex=3600)  # Expire after 1 hour
+                logger.info(f"📡 Published router metadata to Redis: {len(nodes_list)} nodes, {len(rpc_list)} RPC backends")
+            except Exception as e:
+                logger.warning(f"Failed to publish router metadata to Redis: {e}")
+
+            msg1 = "✅ SOLLOL Dashboard launched successfully"
+            msg2 = f"   📊 Access at http://localhost:{self.dashboard_port}"
+            msg3 = f"   📡 Using Redis at {redis_url}"
+            msg4 = f"   🔧 Disable with: SOLLOL_DASHBOARD=false"
+
+            logger.info(msg1)
+            logger.info(msg2)
+            logger.info(msg3)
+            logger.info(msg4)
+            print(msg1)
+            print(msg2)
+            print(msg3)
+            print(msg4)
+
+        except Exception as e:
+            err_msg = f"⚠️  Failed to start dashboard: {e}"
+            info_msg = "   Dashboard can be started manually: python -m sollol.dashboard_service"
+            logger.warning(err_msg)
+            logger.info(info_msg)
+            print(err_msg)
+            print(info_msg)

@@ -6,12 +6,25 @@ This module provides advanced routing decisions based on:
 - Task type detection
 - Historical performance patterns
 - Resource requirements prediction
+- VRAM-aware GPU placement (FlockParser enhancement)
 """
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+# Import VRAM-aware routing utilities
+try:
+    from sollol.intelligent_gpu_router import IntelligentGPURouter
+    from sollol.model_sizes import estimate_model_size, can_fit_in_vram
+    VRAM_ROUTING_AVAILABLE = True
+except ImportError:
+    VRAM_ROUTING_AVAILABLE = False
+    logger.debug("VRAM-aware routing not available (intelligent_gpu_router not imported)")
 
 
 @dataclass
@@ -40,7 +53,7 @@ class IntelligentRouter:
     - Learns from historical patterns
     """
 
-    def __init__(self, coordinator=None):
+    def __init__(self, coordinator=None, gpu_router=None, registry=None):
         self.task_patterns = {
             "embedding": [
                 r"embed",
@@ -87,6 +100,13 @@ class IntelligentRouter:
 
         # Distributed coordination (if enabled)
         self.coordinator = coordinator
+
+        # VRAM-aware GPU routing (FlockParser enhancement)
+        self.gpu_router = gpu_router
+        if gpu_router is None and VRAM_ROUTING_AVAILABLE and registry:
+            # Auto-create GPU router if registry available
+            self.gpu_router = IntelligentGPURouter(registry=registry)
+            logger.info("✅ VRAM-aware GPU routing enabled")
 
     def detect_task_type(self, payload: Dict) -> str:
         """

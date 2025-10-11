@@ -276,3 +276,43 @@ def integrate_with_pool(pool, strategy: AdaptiveParallelismStrategy):
         strategy.set_registry(pool.registry)
 
     logger.info("✅ Adaptive parallelism integrated with OllamaPool")
+
+
+def print_parallelism_report(pool):
+    """
+    Print adaptive parallelism analysis report.
+
+    Args:
+        pool: OllamaPool instance with parallelism strategy
+    """
+    if not hasattr(pool, '_parallelism_strategy'):
+        print("⚠️  Adaptive parallelism not enabled on this pool")
+        return
+
+    strategy = pool._parallelism_strategy
+    print("\n" + "=" * 60)
+    print("🔀 ADAPTIVE PARALLELISM ANALYSIS")
+    print("=" * 60)
+
+    # Get metrics from strategy
+    if hasattr(strategy, 'metrics') and strategy.metrics:
+        metrics = strategy.metrics
+        print(f"\n📊 Decision Metrics:")
+        print(f"   Sequential calls: {metrics.get('sequential_count', 0)}")
+        print(f"   Parallel calls:   {metrics.get('parallel_count', 0)}")
+        print(f"   Avg latency (seq): {metrics.get('avg_sequential_latency', 0):.2f}ms")
+        print(f"   Avg latency (par): {metrics.get('avg_parallel_latency', 0):.2f}ms")
+
+    # Show current thresholds
+    print(f"\n⚙️  Current Thresholds:")
+    print(f"   Latency threshold: {strategy.latency_threshold_ms}ms")
+    print(f"   Queue threshold:   {strategy.queue_depth_threshold}")
+    print(f"   Min parallel:      {strategy.min_parallel_requests}")
+
+    # Show recent decisions
+    if hasattr(strategy, 'recent_decisions'):
+        print(f"\n📝 Recent Decisions:")
+        for decision in strategy.recent_decisions[-5:]:
+            print(f"   {decision['timestamp']}: {decision['mode']} - {decision['reason']}")
+
+    print("=" * 60 + "\n")

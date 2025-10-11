@@ -55,6 +55,9 @@ def discover_ollama_nodes(
         if auto_resolve_docker:
             nodes = auto_resolve_ips(nodes, timeout, _is_ollama_running)
 
+        # Deduplicate localhost vs real IP
+        nodes = _deduplicate_nodes(nodes)
+
         if nodes:
             return nodes
         elif not exclude_localhost:
@@ -78,6 +81,9 @@ def discover_ollama_nodes(
             # Auto-resolve Docker IPs if enabled
             if auto_resolve_docker:
                 nodes = auto_resolve_ips(nodes, timeout, _is_ollama_running)
+
+            # Deduplicate localhost vs real IP
+            nodes = _deduplicate_nodes(nodes)
 
             return nodes
 
@@ -220,3 +226,54 @@ def _parse_host(host_string: str) -> Dict[str, str]:
         return {"host": host, "port": port}
     else:
         return {"host": host_string, "port": "11434"}
+
+
+def _get_local_ip() -> Optional[str]:
+    """Get the machine's primary local IP address."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Doesn't actually connect, just determines route
+        s.connect(("10.255.255.255", 1))
+        local_ip = s.getsockname()[0]
+        return local_ip
+    except:
+        return None
+    finally:
+        s.close()
+
+
+def _deduplicate_nodes(nodes: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """
+    Remove duplicate nodes where localhost/127.0.0.1 refers to the same machine as a real IP.
+
+    Strategy:
+    - If we have both localhost/127.0.0.1 AND the machine's actual IP, keep only the real IP
+    - This prevents showing the same machine twice in the node list
+    """
+    if not nodes:
+        return nodes
+
+    # Get this machine's actual IP
+    local_ip = _get_local_ip()
+    if not local_ip:
+        return nodes  # Can't determine local IP, return as-is
+
+    # Check if we have both localhost and the real IP
+    has_localhost = any(
+        node["host"] in ("localhost", "127.0.0.1")
+        for node in nodes
+    )
+    has_real_ip = any(
+        node["host"] == local_ip
+        for node in nodes
+    )
+
+    # If we have both, filter out localhost entries
+    if has_localhost and has_real_ip:
+        logger.debug(f"Deduplicating: localhost and {local_ip} both found, keeping only {local_ip}")
+        return [
+            node for node in nodes
+            if node["host"] not in ("localhost", "127.0.0.1")
+        ]
+
+    return nodes

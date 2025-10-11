@@ -119,11 +119,10 @@ class UnifiedDashboard:
         if enable_dask:
             try:
                 from dask.distributed import LocalCluster, Client
-                # Configure Dask to silence worker warnings
                 import dask
                 import os
 
-                # Set environment variables before cluster creation (workers inherit these)
+                # Set environment variables before cluster creation
                 os.environ['DASK_DISTRIBUTED__LOGGING__DISTRIBUTED'] = 'error'
                 os.environ['DASK_LOGGING__DISTRIBUTED'] = 'error'
 
@@ -132,19 +131,26 @@ class UnifiedDashboard:
                 dask.config.set({"logging.distributed": "error"})
                 dask.config.set({"distributed.admin.tick.interval": "500ms"})
 
-                # Use threads instead of processes so we can control logging
-                # This keeps workers in the same process where logging suppression works
-                cluster = LocalCluster(
-                    n_workers=1,
-                    threads_per_worker=2,
-                    processes=False,  # Use threads, not separate processes
-                    dashboard_address=f":{dask_dashboard_port}",
-                    silence_logs=logging.CRITICAL,
-                )
+                # Try to connect to existing Dask scheduler first (multi-app coordination)
+                try:
+                    logger.info("🔍 Attempting to connect to existing Dask scheduler...")
+                    # Try default scheduler address
+                    self.dask_client = Client("tcp://127.0.0.1:8786", timeout=2)
+                    logger.info(f"✅ Connected to existing Dask scheduler at {self.dask_client.scheduler.address}")
+                except Exception as e:
+                    # No existing scheduler, create local cluster
+                    logger.info("🚀 Starting new Dask cluster (no existing scheduler found)")
 
-                logger.info("📊 Dask cluster using threaded workers (shared logging context)")
+                    cluster = LocalCluster(
+                        n_workers=1,
+                        threads_per_worker=2,
+                        processes=False,  # Use threads, not separate processes
+                        dashboard_address=f":{dask_dashboard_port}",
+                        silence_logs=logging.CRITICAL,
+                    )
 
-                self.dask_client = Client(cluster)
+                    logger.info("📊 Dask cluster using threaded workers (shared logging context)")
+                    self.dask_client = Client(cluster)
 
                 # Add filter to ALL handlers to block "Task queue depth" warnings
                 # This catches warnings from threaded workers at the handler level
@@ -236,39 +242,60 @@ class UnifiedDashboard:
         def network_nodes():
             """Get all Ollama nodes in the network (universal)."""
             try:
-                # Try to get from router's pool
-                if self.router and hasattr(self.router, 'ollama_pool') and self.router.ollama_pool:
-                    pool = self.router.ollama_pool
+                # Try to get from router's pool (OllamaPool or HybridRouter with ollama_pool)
+                pool = None
+                if self.router:
+                    # Direct OllamaPool
+                    if hasattr(self.router, 'nodes') and isinstance(self.router.nodes, list):
+                        pool = self.router
+                    # HybridRouter with ollama_pool attribute
+                    elif hasattr(self.router, 'ollama_pool') and self.router.ollama_pool:
+                        pool = self.router.ollama_pool
+
+                if pool:
                     nodes = []
                     for node in pool.nodes:
                         # Handle both OllamaNode objects and dict formats
                         if isinstance(node, dict):
-                            url = f"http://{node.get('host', 'localhost')}:{node.get('port', 11434)}"
+                            host = node.get('host', 'localhost')
+                            port = node.get('port', 11434)
+                            url = f"http://{host}:{port}"
+                            node_key = f"{host}:{port}"
+
+                            # Get metrics from pool stats if available
+                            perf_stats = pool.stats.get("node_performance", {}).get(node_key, {})
+                            latency = perf_stats.get("latency_ms", 0)
+                            cpu_load = perf_stats.get("cpu_load", 0)
+                            gpu_mem = perf_stats.get("gpu_free_mem", 0)
+                            available = perf_stats.get("available", True)
+
                             nodes.append({
                                 "url": url,
-                                "status": "healthy",
-                                "latency_ms": 0,
-                                "load_percent": 0,
-                                "memory_mb": 0,
+                                "status": "healthy" if available else "offline",
+                                "latency_ms": int(latency),
+                                "load_percent": int(cpu_load * 100),
+                                "memory_mb": int(gpu_mem),
                             })
                         else:
-                            # OllamaNode object
+                            # OllamaNode object - normalize keys for frontend
                             nodes.append({
                                 "url": node.url,
+                                "status": "healthy" if node.healthy else "unhealthy",
+                                "latency_ms": node.last_latency_ms or 0,
+                                "load_percent": getattr(node, 'load_percent', 0),
+                                "memory_mb": node.free_vram_mb or 0,
                                 "healthy": node.healthy,
-                                "last_latency_ms": node.last_latency_ms,
                                 "failure_count": node.failure_count,
                                 "models": node.models,
                                 "total_vram_mb": node.total_vram_mb,
                                 "free_vram_mb": node.free_vram_mb,
-                                "status": "healthy" if node.healthy else "unhealthy",
                             })
                     return jsonify({"nodes": nodes, "total": len(nodes)})
                 else:
                     # Fallback: auto-discover nodes and transform to expected format
                     from sollol.discovery import discover_ollama_nodes
                     import requests
-                    discovered = discover_ollama_nodes()
+                    discovered = discover_ollama_nodes(discover_all_nodes=True, exclude_localhost=True)
                     nodes = []
                     for node_data in discovered:
                         host = node_data.get("host", "localhost")
@@ -319,19 +346,42 @@ class UnifiedDashboard:
                 try:
                     from sollol.rpc_registry import RPCBackendRegistry
                     registry = RPCBackendRegistry()
-                    for backend in registry.list_backends():
-                        host = backend["host"]
-                        port = backend.get("port", 50052)
-                        status = backend.get("status", "unknown")
+                    # registry.backends is Dict[str, RPCBackend], need to iterate values()
+                    for backend_obj in registry.backends.values():
+                        backend_dict = backend_obj.to_dict()
+                        host = backend_dict["host"]
+                        port = backend_dict["port"]
+                        is_healthy = backend_dict["healthy"]
+                        metrics = backend_dict.get("metrics", {})
                         backends.append({
                             "url": f"{host}:{port}",
-                            "status": "healthy" if status == "active" else "offline",
-                            "latency_ms": backend.get("latency_ms", 0),
-                            "request_count": backend.get("request_count", 0),
-                            "failure_count": backend.get("failure_count", 0),
+                            "status": "healthy" if is_healthy else "offline",
+                            "latency_ms": metrics.get("avg_latency_ms", 0),
+                            "request_count": metrics.get("total_requests", 0),
+                            "failure_count": metrics.get("total_failures", 0),
                         })
-                except:
+                except Exception as e:
+                    logger.debug(f"RPC registry lookup failed: {e}")
                     pass
+
+                # If no backends found, try auto-discovery
+                if not backends:
+                    try:
+                        from sollol.rpc_discovery import auto_discover_rpc_backends
+                        discovered = auto_discover_rpc_backends()
+                        for backend in discovered:
+                            host = backend.get("host")
+                            port = backend.get("port", 50052)
+                            backends.append({
+                                "url": f"{host}:{port}",
+                                "status": "healthy",
+                                "latency_ms": 0,
+                                "request_count": 0,
+                                "failure_count": 0,
+                            })
+                        logger.info(f"Auto-discovered {len(discovered)} RPC backends")
+                    except Exception as e:
+                        logger.debug(f"RPC auto-discovery failed: {e}")
 
                 return jsonify({"backends": backends, "total": len(backends)})
             except Exception as e:
@@ -606,7 +656,7 @@ class UnifiedDashboard:
                     else:
                         # Fallback: auto-discover
                         from sollol.discovery import discover_ollama_nodes
-                        discovered = discover_ollama_nodes()
+                        discovered = discover_ollama_nodes(discover_all_nodes=True, exclude_localhost=True)
                         nodes = [{"url": f"http://{n['host']}:{n['port']}", "status": "discovered"} for n in discovered]
 
                     # Event-driven change detection (SynapticLlamas pattern)
@@ -693,11 +743,13 @@ class UnifiedDashboard:
                     try:
                         from sollol.rpc_registry import RPCBackendRegistry
                         registry = RPCBackendRegistry()
-                        for backend in registry.list_backends():
-                            backend_addr = f"{backend['host']}:{backend.get('port', 50052)}"
+                        # registry.backends is Dict[str, RPCBackend], need to iterate values()
+                        for backend_obj in registry.backends.values():
+                            backend_addr = f"{backend_obj.host}:{backend_obj.port}"
                             if backend_addr not in backends:
                                 backends.append(backend_addr)
-                    except:
+                    except Exception as e:
+                        logger.debug(f"RPC registry WebSocket lookup failed: {e}")
                         pass
 
                     current_backends = set(backends)
@@ -743,23 +795,42 @@ class UnifiedDashboard:
                     logger.error(f"RPC backends WebSocket error: {e}")
                     break
 
-        @self.sock.route('/ws/ollama_activity')
+        @self.sock.route('/ws/network/ollama_activity')
         def ws_ollama_activity(ws):
             """WebSocket endpoint for Ollama model lifecycle events (load/unload/processing)."""
             logger.info("🔌 Ollama activity WebSocket connected")
+
+            # Send immediate connection confirmation
+            ws.send(json.dumps({
+                "type": "connected",
+                "timestamp": time.time(),
+                "message": "🔌 Connected to Ollama activity stream"
+            }))
+
             previous_state = {}
+            last_heartbeat = 0
 
             while True:
                 try:
                     # Get nodes to monitor
                     nodes_to_monitor = []
-                    if self.router and hasattr(self.router, 'ollama_pool'):
-                        pool = self.router.ollama_pool
+                    pool = None
+
+                    # Try multiple ways to get the pool
+                    if self.router:
+                        # Direct OllamaPool
+                        if hasattr(self.router, 'nodes') and isinstance(getattr(self.router, 'nodes', None), list):
+                            pool = self.router
+                        # HybridRouter with ollama_pool
+                        elif hasattr(self.router, 'ollama_pool'):
+                            pool = self.router.ollama_pool
+
+                    if pool:
                         nodes_to_monitor = [(node.url, node.url) for node in pool.nodes if node.healthy]
                     else:
                         # Fallback: auto-discover
                         from sollol.discovery import discover_ollama_nodes
-                        discovered = discover_ollama_nodes()
+                        discovered = discover_ollama_nodes(discover_all_nodes=True, exclude_localhost=True)
                         nodes_to_monitor = [(f"http://{n['host']}:{n['port']}", f"{n['host']}:{n['port']}") for n in discovered]
 
                     # Monitor each node for model activity
@@ -820,7 +891,8 @@ class UnifiedDashboard:
                                 processing_models = {m['name'] for m in models if m.get('processor')}
                                 previous_state[node_key] = {
                                     'models': current_models,
-                                    'processing': processing_models
+                                    'processing': processing_models,
+                                    'reachable': True
                                 }
 
                         except Exception as e:
@@ -835,10 +907,142 @@ class UnifiedDashboard:
                                 }))
                             previous_state[node_key] = {'reachable': False}
 
+                    # Send heartbeat only every 30 seconds if no events
+                    current_time = time.time()
+                    if current_time - last_heartbeat >= 30:
+                        ws.send(json.dumps({
+                            "type": "heartbeat",
+                            "timestamp": current_time,
+                            "message": f"✓ Monitoring {len(nodes_to_monitor)} Ollama nodes"
+                        }))
+                        last_heartbeat = current_time
+
                     time.sleep(2)  # Poll every 2 seconds
 
                 except Exception as e:
                     logger.error(f"Ollama activity WebSocket error: {e}")
+                    break
+
+        @self.sock.route('/ws/network/rpc_activity')
+        def ws_rpc_activity(ws):
+            """WebSocket endpoint for llama.cpp RPC backend activity."""
+            logger.info("🔌 RPC activity WebSocket connected")
+
+            # Send immediate connection confirmation
+            ws.send(json.dumps({
+                "type": "connected",
+                "timestamp": time.time(),
+                "message": "🔌 Connected to RPC activity stream"
+            }))
+
+            previous_state = {}
+            last_heartbeat = 0
+
+            while True:
+                try:
+                    # Get RPC backends to monitor
+                    backends_to_monitor = []
+
+                    # Try getting from router first (fast)
+                    if self.router and hasattr(self.router, 'rpc_backends'):
+                        backends_to_monitor = [(f"{b['host']}:{b['port']}", f"{b['host']}:{b['port']}")
+                                             for b in self.router.rpc_backends]
+
+                    # Try RPC registry (fast - cached backends)
+                    if not backends_to_monitor:
+                        try:
+                            from sollol.rpc_registry import RPCBackendRegistry
+                            registry = RPCBackendRegistry()
+                            # registry.backends is Dict[str, RPCBackend], need to iterate values()
+                            backends_to_monitor = [(f"{b.host}:{b.port}", f"{b.host}:{b.port}")
+                                                 for b in registry.backends.values()]
+                        except Exception as e:
+                            logger.debug(f"RPC registry lookup failed: {e}")
+
+                    # Fallback: auto-discover (slow - 5+ seconds)
+                    if not backends_to_monitor:
+                        try:
+                            from sollol.rpc_discovery import auto_discover_rpc_backends
+                            discovered = auto_discover_rpc_backends()
+                            backends_to_monitor = [(f"{b['host']}:{b['port']}", f"{b['host']}:{b['port']}")
+                                                 for b in discovered]
+                        except Exception as e:
+                            logger.debug(f"RPC discovery failed: {e}")
+
+                    # Send discovery message for all backends (immediate feedback)
+                    for backend_key, display_key in backends_to_monitor:
+                        # Only send discovery message if we haven't seen this backend before
+                        if backend_key not in previous_state:
+                            ws.send(json.dumps({
+                                "type": "backend_discovered",
+                                "timestamp": time.time(),
+                                "backend": display_key,
+                                "message": f"🔍 RPC backend: {display_key}"
+                            }))
+
+                    any_state_change = False
+
+                    # Monitor each backend
+                    for backend_key, display_key in backends_to_monitor:
+                        try:
+                            host, port = backend_key.split(':')
+                            # Try to check if backend is alive (simplified - actual health check would be gRPC)
+                            import socket
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            sock.settimeout(1)
+                            result = sock.connect_ex((host, int(port)))
+                            sock.close()
+
+                            is_reachable = (result == 0)
+                            was_reachable = previous_state.get(backend_key, {}).get('reachable', False)
+
+                            # Detect state changes ONLY
+                            if is_reachable and not was_reachable:
+                                ws.send(json.dumps({
+                                    "type": "backend_online",
+                                    "timestamp": time.time(),
+                                    "backend": display_key,
+                                    "message": f"✅ RPC backend online: {display_key}"
+                                }))
+                                any_state_change = True
+                            elif not is_reachable and was_reachable:
+                                ws.send(json.dumps({
+                                    "type": "backend_offline",
+                                    "timestamp": time.time(),
+                                    "backend": display_key,
+                                    "message": f"❌ RPC backend offline: {display_key}"
+                                }))
+                                any_state_change = True
+
+                            previous_state[backend_key] = {'reachable': is_reachable}
+
+                        except Exception as e:
+                            # Mark as unreachable
+                            was_reachable = previous_state.get(backend_key, {}).get('reachable', True)
+                            if was_reachable:
+                                ws.send(json.dumps({
+                                    "type": "backend_error",
+                                    "timestamp": time.time(),
+                                    "backend": display_key,
+                                    "message": f"⚠️  RPC backend error: {display_key}"
+                                }))
+                                any_state_change = True
+                            previous_state[backend_key] = {'reachable': False}
+
+                    # Only send heartbeat every 30 seconds if no state changes
+                    current_time = time.time()
+                    if not any_state_change and (current_time - last_heartbeat >= 30):
+                        ws.send(json.dumps({
+                            "type": "heartbeat",
+                            "timestamp": current_time,
+                            "message": f"✓ Monitoring {len(backends_to_monitor)} RPC backends"
+                        }))
+                        last_heartbeat = current_time
+
+                    time.sleep(3)  # Poll every 3 seconds
+
+                except Exception as e:
+                    logger.error(f"RPC activity WebSocket error: {e}")
                     break
 
         @self.sock.route('/ws/applications')
@@ -983,7 +1187,7 @@ class UnifiedDashboard:
 
     def run(self, host: str = "0.0.0.0", debug: bool = False, allow_fallback: bool = True):
         """
-        Run dashboard server (production-ready with Waitress).
+        Run dashboard server (production-ready with gevent for WebSocket support).
 
         Args:
             host: Host to bind to
@@ -1010,15 +1214,15 @@ class UnifiedDashboard:
         logger.info(f"   Prometheus: http://{host}:{self.dashboard_port}/api/prometheus")
 
         try:
+            # Use Flask's development server for WebSocket support (Flask-Sock compatible)
+            # NOTE: Flask-Sock requires Flask's dev server or specific ASGI servers
+            # gevent-websocket is NOT compatible with Flask-Sock
             if debug:
-                # Development mode - use Flask's dev server
-                logger.warning("⚠️  Running in DEBUG mode - not for production!")
+                logger.warning("⚠️  Running in DEBUG mode")
                 self.app.run(host=host, port=self.dashboard_port, debug=True)
             else:
-                # Production mode - use Waitress
-                from waitress import serve
-                logger.info("✅ Using Waitress production server")
-                serve(self.app, host=host, port=self.dashboard_port, threads=4)
+                logger.info("✅ Using Flask development server (WebSocket support via Flask-Sock)")
+                self.app.run(host=host, port=self.dashboard_port, debug=False, threaded=True)
         except OSError as e:
             if "Address already in use" in str(e):
                 logger.warning(f"⚠️  Port {self.dashboard_port} already in use")
@@ -1294,6 +1498,36 @@ UNIFIED_DASHBOARD_HTML = """
             </div>
         </div>
 
+        <!-- Ollama Activity Logs -->
+        <div class="dashboard-panel full-height">
+            <div class="panel-header">
+                <span class="status-indicator status-active"></span>
+                🖥️ Ollama Activity Logs
+            </div>
+            <div class="panel-content">
+                <div id="ollama-activity" style="padding: 1rem; overflow: auto; height: 100%; font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.4; background: #0f172a;">
+                    <div style="color: #94a3b8; text-align: center; padding: 2rem;">
+                        Connecting to Ollama activity stream...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- llama.cpp Activity Logs -->
+        <div class="dashboard-panel full-height">
+            <div class="panel-header">
+                <span class="status-indicator status-active"></span>
+                🔗 llama.cpp Activity Logs
+            </div>
+            <div class="panel-content">
+                <div id="rpc-activity" style="padding: 1rem; overflow: auto; height: 100%; font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.4; background: #0f172a;">
+                    <div style="color: #94a3b8; text-align: center; padding: 2rem;">
+                        Connecting to llama.cpp activity stream...
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Ray Dashboard -->
         <div class="dashboard-panel full-height">
             <div class="panel-header">
@@ -1339,7 +1573,7 @@ UNIFIED_DASHBOARD_HTML = """
             }
         })();
 
-        // Update metrics every 2 seconds
+        // Update metrics every 30 seconds
         setInterval(async () => {
             try {
                 // SOLLOL metrics
@@ -1556,7 +1790,112 @@ UNIFIED_DASHBOARD_HTML = """
             } catch (error) {
                 console.error('Error updating metrics:', error);
             }
-        }, 2000);
+        }, 30000);
+
+        // WebSocket connections for activity logs
+        function connectActivityLogs() {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsHost = window.location.host;
+
+            // Ollama Activity WebSocket
+            const ollamaWs = new WebSocket(`${wsProtocol}//${wsHost}/ws/network/ollama_activity`);
+            const ollamaActivity = document.getElementById('ollama-activity');
+
+            ollamaWs.onopen = () => {
+                // Don't clear the div - let the first WebSocket message display connection status
+            };
+
+            ollamaWs.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    // Clear initial "Connecting..." message on first real message
+                    if (ollamaActivity.querySelector('div[style*="text-align: center"]')) {
+                        ollamaActivity.innerHTML = '';
+                    }
+
+                    const entry = document.createElement('div');
+                    entry.style.padding = '0.25rem 0';
+                    entry.style.borderBottom = '1px solid #1e293b';
+                    entry.style.fontSize = '0.875rem';
+
+                    // Style connection messages differently
+                    if (data.type === 'connected') {
+                        entry.style.color = '#10b981';
+                        entry.style.padding = '0.5rem';
+                        entry.style.borderBottom = 'none';
+                    }
+
+                    entry.textContent = data.message || event.data;
+                    ollamaActivity.appendChild(entry);
+                    ollamaActivity.scrollTop = ollamaActivity.scrollHeight;
+                } catch(e) {
+                    console.error('Failed to parse WebSocket message:', e);
+                }
+            };
+
+            ollamaWs.onerror = () => {
+                ollamaActivity.innerHTML = '<div style="color: #ef4444; padding: 0.5rem;">✗ Connection error</div>';
+            };
+
+            ollamaWs.onclose = () => {
+                setTimeout(() => {
+                    ollamaActivity.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
+                    connectActivityLogs();
+                }, 5000);
+            };
+
+            // llama.cpp Activity WebSocket
+            const rpcWs = new WebSocket(`${wsProtocol}//${wsHost}/ws/network/rpc_activity`);
+            const rpcActivity = document.getElementById('rpc-activity');
+
+            rpcWs.onopen = () => {
+                // Don't clear the div - let the first WebSocket message display connection status
+            };
+
+            rpcWs.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    // Clear initial "Connecting..." message on first real message
+                    if (rpcActivity.querySelector('div[style*="text-align: center"]')) {
+                        rpcActivity.innerHTML = '';
+                    }
+
+                    const entry = document.createElement('div');
+                    entry.style.padding = '0.25rem 0';
+                    entry.style.borderBottom = '1px solid #1e293b';
+                    entry.style.fontSize = '0.875rem';
+
+                    // Style connection messages differently
+                    if (data.type === 'connected') {
+                        entry.style.color = '#10b981';
+                        entry.style.padding = '0.5rem';
+                        entry.style.borderBottom = 'none';
+                    }
+
+                    entry.textContent = data.message || event.data;
+                    rpcActivity.appendChild(entry);
+                    rpcActivity.scrollTop = rpcActivity.scrollHeight;
+                } catch(e) {
+                    console.error('Failed to parse WebSocket message:', e);
+                }
+            };
+
+            rpcWs.onerror = () => {
+                rpcActivity.innerHTML = '<div style="color: #ef4444; padding: 0.5rem;">✗ Connection error</div>';
+            };
+
+            rpcWs.onclose = () => {
+                setTimeout(() => {
+                    rpcActivity.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
+                    connectActivityLogs();
+                }, 5000);
+            };
+        }
+
+        // Connect on page load
+        connectActivityLogs();
     </script>
 </body>
 </html>
@@ -1581,13 +1920,99 @@ def run_unified_dashboard(
         dashboard_port: Unified dashboard port
         host: Host to bind to
         enable_dask: Enable Dask distributed client with dashboard
-    """
-    dashboard = UnifiedDashboard(
-        router=router,
-        ray_dashboard_port=ray_dashboard_port,
-        dask_dashboard_port=dask_dashboard_port,
-        dashboard_port=dashboard_port,
-        enable_dask=enable_dask,
-    )
 
-    dashboard.run(host=host)
+    Returns:
+        dict: Status with 'started' (bool) and 'url' (str) keys
+              - started=True: This process started the dashboard
+              - started=False: Dashboard was already running
+
+    Note:
+        If a dashboard is already running on the specified port, this function
+        will return immediately without starting a new dashboard. This prevents
+        port conflicts and duplicate dashboards when using persistent dashboard_service.
+    """
+    import fcntl
+    import os
+    import socket
+
+    dashboard_url = f"http://localhost:{dashboard_port}"
+
+    # LAYER 1: Check if port is already in use (fastest check)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # Try to bind to the port
+        sock.bind(('127.0.0.1', dashboard_port))
+        sock.close()
+        # Port is available, continue to startup logic
+    except OSError:
+        # Port is in use - dashboard already running
+        logger.info(f"ℹ️  Dashboard already running on port {dashboard_port}")
+        logger.info(f"   → Using existing dashboard at {dashboard_url}")
+        return {"started": False, "url": dashboard_url}
+
+    # LAYER 2: HTTP API check (verify it's actually a SOLLOL dashboard)
+    try:
+        response = requests.get(
+            f"{dashboard_url}/api/applications",
+            timeout=1
+        )
+        if response.status_code == 200:
+            logger.info(f"ℹ️  Dashboard already running at {dashboard_url}")
+            logger.info("   → Using existing dashboard (skipping embedded dashboard)")
+            return {"started": False, "url": dashboard_url}
+    except requests.exceptions.RequestException:
+        pass  # Dashboard not running, continue
+
+    # LAYER 3: File lock to coordinate startup (prevent race conditions)
+    lock_file_path = f"/tmp/sollol_dashboard_{dashboard_port}.lock"
+    lock_file = None
+
+    try:
+        # Try to acquire exclusive lock (non-blocking)
+        lock_file = open(lock_file_path, 'w')
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        # We got the lock! Final check before starting
+        try:
+            response = requests.get(
+                f"{dashboard_url}/api/applications",
+                timeout=1
+            )
+            if response.status_code == 200:
+                logger.info(f"ℹ️  Dashboard started by another process")
+                logger.info(f"   → Using existing dashboard at {dashboard_url}")
+                return {"started": False, "url": dashboard_url}
+        except requests.exceptions.RequestException:
+            pass  # Dashboard definitely not running, start it
+
+        # Start dashboard (lock will be held until process exits)
+        logger.info(f"🚀 Starting unified dashboard on port {dashboard_port}")
+        dashboard = UnifiedDashboard(
+            router=router,
+            ray_dashboard_port=ray_dashboard_port,
+            dask_dashboard_port=dask_dashboard_port,
+            dashboard_port=dashboard_port,
+            enable_dask=enable_dask,
+        )
+
+        # dashboard.run() blocks - lock held until process exits
+        dashboard.run(host=host)
+
+        # This line only reached if dashboard.run() exits (shouldn't happen normally)
+        return {"started": True, "url": dashboard_url}
+
+    except BlockingIOError:
+        # Another process already has the lock - dashboard is starting/running
+        logger.info(f"ℹ️  Dashboard startup in progress (another process has lock)")
+        logger.info(f"   → Using existing dashboard at {dashboard_url}")
+        return {"started": False, "url": dashboard_url}
+
+    finally:
+        # Only release lock if we acquired it and dashboard startup failed
+        # If dashboard.run() is blocking successfully, this won't execute until process exits
+        if lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                lock_file.close()
+            except:
+                pass

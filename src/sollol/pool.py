@@ -23,6 +23,14 @@ import requests
 from .intelligence import IntelligentRouter, get_router
 from .node_health import NodeHealthMonitor, normalize_model_name
 from .vram_monitor import VRAMMonitor
+from .metrics_logger import log_node_health, log_request
+from .network_observer import (
+    log_ollama_request,
+    log_ollama_response,
+    log_ollama_error,
+    log_node_health_check,
+    log_node_status_change,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +53,9 @@ class OllamaPool:
         enable_intelligent_routing: bool = True,
         exclude_localhost: bool = False,
         discover_all_nodes: bool = False,
+        app_name: Optional[str] = None,
+        register_with_dashboard: bool = True,
+        enable_ray: bool = False,
     ):
         """
         Initialize connection pool with full observability.
@@ -54,10 +65,15 @@ class OllamaPool:
             enable_intelligent_routing: Use intelligent routing (default: True)
             exclude_localhost: Skip localhost during discovery (for SOLLOL gateway)
             discover_all_nodes: Scan full network for ALL nodes (slower but comprehensive)
+            app_name: Custom application name for dashboard registration (e.g., "FlockParser")
+            register_with_dashboard: Whether to auto-register with dashboard (default: True)
+            enable_ray: Initialize Ray cluster for multi-app coordination (default: False)
         """
         self.nodes = nodes or []
         self.exclude_localhost = exclude_localhost
         self.discover_all_nodes = discover_all_nodes
+        self.app_name = app_name  # Store custom app name for dashboard registration
+        self.register_with_dashboard = register_with_dashboard  # Control dashboard registration
         self._lock = threading.Lock()
         self._current_index = 0
 
@@ -77,6 +93,10 @@ class OllamaPool:
         self._vram_refresh_interval = 30  # seconds
         self._vram_refresh_enabled = True
 
+        # Health check configuration
+        self._health_check_interval = 30  # seconds - check node health every 30s
+        self._health_check_enabled = True
+
         # Enhanced stats tracking with performance metrics
         self.stats = {
             "total_requests": 0,
@@ -86,8 +106,15 @@ class OllamaPool:
             "node_performance": {},  # Track performance per node
         }
 
+        # Deduplicate nodes (removes localhost if real IP exists)
+        self._deduplicate_nodes()
+
         # Initialize node metadata for intelligent routing
         self._init_node_metadata()
+
+        # Initialize Ray cluster if requested (for multi-app coordination)
+        if enable_ray:
+            self._init_ray_cluster()
 
         # Start background VRAM monitoring thread
         self._vram_refresh_thread = threading.Thread(
@@ -97,11 +124,22 @@ class OllamaPool:
         )
         self._vram_refresh_thread.start()
 
+        # Start background health check thread for live dashboard updates
+        self._health_check_thread = threading.Thread(
+            target=self._health_check_loop,
+            daemon=True,
+            name="OllamaPool-Health-Monitor"
+        )
+        self._health_check_thread.start()
+
         logger.info(
             f"OllamaPool initialized with {len(self.nodes)} nodes "
             f"(intelligent_routing={'enabled' if enable_intelligent_routing else 'disabled'}, "
-            f"vram_monitoring=enabled, gpu_type={self.vram_monitor.gpu_type})"
+            f"vram_monitoring=enabled, health_checks=enabled, gpu_type={self.vram_monitor.gpu_type})"
         )
+
+        # Auto-register with SOLLOL dashboard if available
+        self._auto_register_with_dashboard()
 
     @classmethod
     def auto_configure(cls, discover_all_nodes: bool = False) -> "OllamaPool":
@@ -140,6 +178,48 @@ class OllamaPool:
             else:
                 logger.info(f"Auto-discovered {len(nodes)} nodes: {nodes}")
 
+    def _deduplicate_nodes(self):
+        """
+        Remove duplicate nodes where localhost/127.0.0.1 refers to the same machine as a real IP.
+
+        This handles cases where nodes are loaded from config files or manually added,
+        ensuring localhost and the machine's real IP aren't both shown.
+        """
+        if not self.nodes:
+            return
+
+        import socket
+
+        # Get this machine's actual IP
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("10.255.255.255", 1))  # Doesn't actually connect, just determines route
+            local_ip = s.getsockname()[0]
+            s.close()
+        except:
+            return  # Can't determine local IP, skip deduplication
+
+        with self._lock:
+            # Check if we have both localhost and the real IP
+            has_localhost = any(
+                node["host"] in ("localhost", "127.0.0.1")
+                for node in self.nodes
+            )
+            has_real_ip = any(
+                node["host"] == local_ip
+                for node in self.nodes
+            )
+
+            # If we have both, filter out localhost entries
+            if has_localhost and has_real_ip:
+                original_count = len(self.nodes)
+                self.nodes = [
+                    node for node in self.nodes
+                    if node["host"] not in ("localhost", "127.0.0.1")
+                ]
+                logger.info(f"🔍 Deduplicated nodes: removed localhost (same as {local_ip})")
+                logger.debug(f"   Reduced from {original_count} to {len(self.nodes)} nodes")
+
     def _init_node_metadata(self):
         """Initialize metadata for each node with REAL VRAM data."""
         with self._lock:
@@ -165,6 +245,50 @@ class OllamaPool:
                     logger.debug(
                         f"Initialized {node_key}: gpu_free_mem={gpu_free_mem}MB"
                     )
+
+    def _init_ray_cluster(self):
+        """Initialize Ray cluster for multi-app coordination."""
+        try:
+            import ray
+            import json
+            import os
+
+            if ray.is_initialized():
+                logger.info("✅ Ray already initialized (shared cluster)")
+                return
+
+            # Disable Ray memory monitor
+            os.environ['RAY_memory_monitor_refresh_ms'] = '0'
+
+            # Try to connect to existing Ray cluster first (multi-app coordination)
+            try:
+                logger.info("🔍 Attempting to connect to existing Ray cluster...")
+                ray.init(address='auto', ignore_reinit_error=True)
+                logger.info("✅ Connected to existing Ray cluster")
+            except (ConnectionError, Exception) as e:
+                # No existing cluster, start a new one
+                logger.info("🚀 Starting new Ray cluster for multi-app coordination")
+
+                # Conservative memory settings
+                ray.init(
+                    ignore_reinit_error=True,
+                    dashboard_host="0.0.0.0",
+                    dashboard_port=8265,
+                    include_dashboard=True,
+                    num_cpus=1,  # Minimal workers
+                    object_store_memory=256 * 1024 * 1024,  # 256MB for object store
+                    _system_config={
+                        "automatic_object_spilling_enabled": True,
+                        "object_spilling_config": json.dumps({
+                            "type": "filesystem",
+                            "params": {"directory_path": "/tmp/ray_spill"}
+                        })
+                    }
+                )
+                logger.info("📊 Ray dashboard available at http://localhost:8265")
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to initialize Ray cluster: {e}")
+            logger.info("   Continuing without Ray (not required for OllamaPool)")
 
     def _select_node(
         self, payload: Optional[Dict[str, Any]] = None, priority: int = 5
@@ -221,7 +345,7 @@ class OllamaPool:
                 return node, None
 
     def _make_request(
-        self, endpoint: str, data: Dict[str, Any], priority: int = 5, timeout: float = 30.0
+        self, endpoint: str, data: Dict[str, Any], priority: int = 5, timeout: float = 300.0
     ) -> Any:
         """
         Make HTTP request to selected node with intelligent routing and performance tracking.
@@ -264,6 +388,16 @@ class OllamaPool:
 
             # Track request start time
             start_time = time.time()
+
+            # Log request to observer
+            model = data.get("model", "unknown")
+            operation = endpoint.split("/")[-1]  # "chat", "generate", etc.
+            log_ollama_request(
+                backend=node_key,
+                model=model,
+                operation=operation,
+                priority=priority
+            )
 
             try:
                 logger.debug(f"Request to {url}")
@@ -316,6 +450,14 @@ class OllamaPool:
                         f"avg: {self.stats['node_performance'][node_key]['latency_ms']:.1f}ms)"
                     )
 
+                    # Log response to observer
+                    log_ollama_response(
+                        backend=node_key,
+                        model=model,
+                        latency_ms=latency_ms,
+                        status_code=response.status_code
+                    )
+
                     # Record performance for router learning
                     if self.router and "model" in data:
                         task_type = (
@@ -332,11 +474,27 @@ class OllamaPool:
                     errors.append(f"{url}: HTTP {response.status_code}")
                     self._record_failure(node_key, latency_ms)
 
+                    # Log error to observer
+                    log_ollama_error(
+                        backend=node_key,
+                        model=model,
+                        error=f"HTTP {response.status_code}",
+                        latency_ms=latency_ms
+                    )
+
             except Exception as e:
                 latency_ms = (time.time() - start_time) * 1000
                 errors.append(f"{url}: {str(e)}")
                 logger.debug(f"Request failed: {e}")
                 self._record_failure(node_key, latency_ms)
+
+                # Log error to observer
+                log_ollama_error(
+                    backend=node_key,
+                    model=model,
+                    error=str(e),
+                    latency_ms=latency_ms
+                )
 
             finally:
                 # Decrement active request counter (always runs)
@@ -546,6 +704,58 @@ class OllamaPool:
             logger.debug(f"Failed to parse VRAM from /api/ps: {e}")
             return 0
 
+    def _auto_register_with_dashboard(self):
+        """
+        Auto-register with SOLLOL dashboard if one is running.
+
+        This provides automatic observability without requiring manual DashboardClient setup.
+        Checks for dashboard on default port (8080) and registers silently if found.
+        """
+        try:
+            import socket
+            from .dashboard_client import DashboardClient
+
+            # Check if dashboard is running (quick timeout to avoid blocking startup)
+            dashboard_url = "http://localhost:8080"
+            test_response = requests.get(f"{dashboard_url}/api/applications", timeout=0.5)
+
+            if test_response.status_code == 200:
+                # Dashboard is running, auto-register
+                hostname = socket.gethostname()
+                # Use custom app_name if provided, otherwise default to "OllamaPool (hostname)"
+                app_name = self.app_name or f"OllamaPool ({hostname})"
+
+                # Auto-discover RPC backends for metadata
+                try:
+                    from .rpc_discovery import auto_discover_rpc_backends
+                    rpc_backends = auto_discover_rpc_backends()
+                    self._rpc_backends = rpc_backends
+                except Exception:
+                    self._rpc_backends = []
+
+                self._dashboard_client = DashboardClient(
+                    app_name=app_name,
+                    router_type="OllamaPool",
+                    version="0.9.46",
+                    dashboard_url=dashboard_url,
+                    metadata={
+                        "nodes": len(self.nodes),
+                        "intelligent_routing": self.enable_intelligent_routing,
+                        "vram_monitoring": True,
+                        "health_checks": True,
+                        "gpu_type": self.vram_monitor.gpu_type,
+                        "model_sharding": len(self._rpc_backends) > 0,  # Simple boolean indicator
+                        "rpc_backends": len(self._rpc_backends) if self._rpc_backends else None,
+                    },
+                    auto_register=True
+                )
+                logger.info(f"✅ Auto-registered with SOLLOL dashboard at {dashboard_url}")
+        except (requests.exceptions.RequestException, ImportError, Exception) as e:
+            # Dashboard not running or not available - silent failure is fine
+            logger.debug(f"Dashboard auto-registration skipped: {e}")
+            self._dashboard_client = None
+            self._rpc_backends = []
+
     def _refresh_vram_loop(self):
         """Background thread to periodically refresh VRAM data."""
         logger.debug("VRAM monitoring thread started")
@@ -578,6 +788,124 @@ class OllamaPool:
                 logger.error(f"VRAM refresh loop error: {e}")
 
         logger.debug("VRAM monitoring thread stopped")
+
+    def _health_check_loop(self):
+        """Background thread to periodically check node health for live dashboard updates."""
+        logger.debug("Health check monitoring thread started")
+
+        while self._health_check_enabled:
+            try:
+                time.sleep(self._health_check_interval)
+
+                # Check health of all nodes
+                with self._lock:
+                    for node in self.nodes:
+                        node_key = f"{node['host']}:{node['port']}"
+
+                        if node_key in self.stats["node_performance"]:
+                            # Get current performance data
+                            perf_data = self.stats["node_performance"][node_key]
+
+                            # Ping node with lightweight /api/tags request
+                            start_time = time.time()
+                            try:
+                                url = f"http://{node['host']}:{node['port']}/api/tags"
+                                response = requests.get(url, timeout=2)
+                                latency_ms = (time.time() - start_time) * 1000
+
+                                if response.ok:
+                                    # Check for status change
+                                    old_status = "offline" if not perf_data.get("available", True) else "healthy"
+                                    new_status = "healthy"
+
+                                    # Update health status
+                                    self.stats["node_performance"][node_key]["available"] = True
+                                    self.stats["node_performance"][node_key]["latency_ms"] = latency_ms
+
+                                    # Update health monitor baseline
+                                    self.health_monitor.update_baseline(
+                                        node_key, latency_ms, is_gpu=True
+                                    )
+
+                                    # Log health check to observer
+                                    log_node_health_check(
+                                        backend=node_key,
+                                        status=new_status,
+                                        latency_ms=latency_ms
+                                    )
+
+                                    # Log to InfluxDB time-series metrics
+                                    log_node_health(
+                                        node_url=f"http://{node['host']}:{node['port']}",
+                                        healthy=True,
+                                        latency_ms=latency_ms,
+                                        models_loaded=len(node.get('models', [])),
+                                        vram_free_mb=perf_data.get('gpu_free_mem', 0),
+                                        vram_total_mb=perf_data.get('gpu_total_mem', 0),
+                                        failure_count=0
+                                    )
+
+                                    # Log status change if needed
+                                    if old_status != new_status:
+                                        log_node_status_change(
+                                            backend=node_key,
+                                            old_status=old_status,
+                                            new_status=new_status
+                                        )
+
+                                    logger.debug(
+                                        f"✓ Health check {node_key}: {latency_ms:.0f}ms"
+                                    )
+                                else:
+                                    # Check for status change
+                                    old_status = "healthy" if perf_data.get("available", True) else "offline"
+                                    new_status = "offline"
+
+                                    # Node returned error
+                                    self.stats["node_performance"][node_key]["available"] = False
+
+                                    # Log health check failure to observer
+                                    log_node_health_check(
+                                        backend=node_key,
+                                        status=new_status,
+                                        latency_ms=latency_ms,
+                                        error=f"HTTP {response.status_code}"
+                                    )
+
+                                    # Log to InfluxDB time-series metrics
+                                    log_node_health(
+                                        node_url=f"http://{node['host']}:{node['port']}",
+                                        healthy=False,
+                                        latency_ms=latency_ms,
+                                        failure_count=perf_data.get('failure_count', 0)
+                                    )
+
+                                    # Log status change if needed
+                                    if old_status != new_status:
+                                        log_node_status_change(
+                                            backend=node_key,
+                                            old_status=old_status,
+                                            new_status=new_status
+                                        )
+
+                                    logger.warning(
+                                        f"⚠️  Health check {node_key}: HTTP {response.status_code}"
+                                    )
+
+                            except requests.exceptions.Timeout:
+                                # Node timed out
+                                self.stats["node_performance"][node_key]["available"] = False
+                                logger.warning(f"⚠️  Health check {node_key}: timeout (>2s)")
+
+                            except requests.exceptions.RequestException as e:
+                                # Node unreachable
+                                self.stats["node_performance"][node_key]["available"] = False
+                                logger.warning(f"⚠️  Health check {node_key}: unreachable ({e})")
+
+            except Exception as e:
+                logger.error(f"Health check loop error: {e}")
+
+        logger.debug("Health check monitoring thread stopped")
 
     def _record_failure(self, node_key: str, latency_ms: float):
         """Record a failed request for a node."""

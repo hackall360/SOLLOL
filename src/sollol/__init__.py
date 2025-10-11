@@ -35,6 +35,13 @@ Example:
     ```
 """
 
+import logging
+
+# Configure library logging - use NullHandler by default when used as a library
+# Applications can configure their own handlers if they want SOLLOL logs
+logging.getLogger("sollol").addHandler(logging.NullHandler())
+logging.getLogger("sollol").setLevel(logging.WARNING)  # Only show warnings/errors by default
+
 from sollol.client import SOLLOLClient
 from sollol.config import SOLLOLConfig
 
@@ -63,6 +70,18 @@ from sollol.llama_cpp_rpc import LlamaCppDistributedCluster, LlamaCppRPCClient
 from sollol.unified_dashboard import UnifiedDashboard, run_unified_dashboard
 from sollol.distributed_tracing import DistributedTracer, get_tracer
 from sollol.dashboard_client import DashboardClient
+from sollol.network_observer import NetworkObserver, get_observer
+
+# Time-Series Metrics (InfluxDB)
+from sollol.metrics_logger import (
+    is_enabled as metrics_enabled,
+    log_metric,
+    log_node_health,
+    log_rpc_backend_health,
+    log_request,
+    log_routing_decision,
+    query_metrics,
+)
 
 # Distributed execution
 from sollol.execution import AsyncDistributedExecutor, DistributedExecutor
@@ -77,7 +96,7 @@ from sollol.rpc_registry import RPCBackendRegistry
 # Legacy support
 from sollol.sollol import SOLLOL
 
-__version__ = "0.9.19"
+__version__ = "0.9.47"
 __all__ = [
     # Core
     "OllamaPool",
@@ -95,6 +114,16 @@ __all__ = [
     "DistributedTracer",
     "get_tracer",
     "DashboardClient",
+    "NetworkObserver",
+    "get_observer",
+    # Time-Series Metrics
+    "metrics_enabled",
+    "log_metric",
+    "log_node_health",
+    "log_rpc_backend_health",
+    "log_request",
+    "log_routing_decision",
+    "query_metrics",
     # Distributed execution
     "DistributedExecutor",
     "AsyncDistributedExecutor",
