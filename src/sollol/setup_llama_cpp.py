@@ -37,6 +37,10 @@ def clone_llama_cpp(install_dir):
         capture_output=True,
         text=True,
     )
+    if result.returncode == 0:
+        print("✅ Cloned llama.cpp")
+        print("ℹ️  Recommended: Update to build 6743+ for stability fixes")
+        print("   Run: cd ~/llama.cpp && git pull")
     return result.returncode == 0
 
 
@@ -147,6 +151,12 @@ def main():
         help="Install as systemd service (recommended for production)",
     )
 
+    parser.add_argument(
+        "--gpu-monitoring",
+        action="store_true",
+        help="Also install GPU monitoring service (requires Redis)",
+    )
+
     args = parser.parse_args()
 
     # Check cmake
@@ -164,6 +174,7 @@ def main():
         args.clone = True
         args.build = True
         args.service = True
+        args.gpu_monitoring = True
 
     # Clone
     if args.clone:
@@ -223,6 +234,50 @@ def main():
                 print("❌ install_systemd_service.py not found")
                 return 1
 
+    # Install GPU monitoring service
+    if args.gpu_monitoring:
+        print("\n" + "=" * 70)
+        print("Installing GPU Monitoring Service")
+        print("=" * 70)
+
+        # Check Redis
+        try:
+            result = subprocess.run(["redis-cli", "ping"], capture_output=True, text=True, timeout=2)
+            if result.returncode != 0 or "PONG" not in result.stdout:
+                print("❌ Redis not available")
+                print("   Install Redis: sudo apt-get install redis-server")
+                return 1
+        except Exception:
+            print("❌ Redis not available")
+            print("   Install Redis: sudo apt-get install redis-server")
+            return 1
+
+        print("✅ Redis available")
+
+        # Install Python dependencies
+        print("📦 Installing Python dependencies (gpustat, redis)...")
+        result = subprocess.run([sys.executable, "-m", "pip", "install", "gpustat", "redis"],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"❌ Failed to install dependencies: {result.stderr}")
+            return 1
+        print("✅ Dependencies installed")
+
+        # Run installation script
+        scripts_dir = Path(__file__).parent.parent.parent / "scripts"
+        install_script = scripts_dir / "install-gpu-reporter-service.sh"
+
+        if install_script.exists():
+            print("🚀 Installing GPU reporter service...")
+            result = subprocess.run(["bash", str(install_script)])
+            if result.returncode != 0:
+                print("❌ Failed to install GPU monitoring service")
+                return 1
+        else:
+            print(f"⚠️  Installation script not found at {install_script}")
+            print("   GPU monitoring service not installed")
+            print("   Run manually: scripts/install-gpu-reporter-service.sh")
+
     # Start (interactive mode)
     if args.start:
         if not check_llama_cpp_exists(install_dir):
@@ -233,22 +288,29 @@ def main():
         start_rpc_server(install_dir, args.host, args.port, args.mem)
 
     # No args - show help
-    if not (args.clone or args.build or args.start or args.all):
+    if not (args.clone or args.build or args.start or args.all or args.service or args.gpu_monitoring):
         parser.print_help()
         print("\n" + "=" * 70)
         print("QUICK START:")
         print("=" * 70)
-        print("\n1. Full setup (clone + build + start):")
+        print("\n1. Full setup (clone + build + systemd services):")
         print("   python setup_llama_cpp.py --all")
-        print("\n2. Just start (if already built):")
+        print("\n2. Production setup (with GPU monitoring):")
+        print("   python setup_llama_cpp.py --all --gpu-monitoring")
+        print("\n3. Just start (if already built):")
         print("   python setup_llama_cpp.py --start")
-        print("\n3. Custom port:")
+        print("\n4. Custom port:")
         print("   python setup_llama_cpp.py --start --port 50053")
-        print("\n4. Multi-node setup:")
-        print("   # Node 1:")
-        print("   python setup_llama_cpp.py --start --host 0.0.0.0 --port 50052")
-        print("\n   # Node 2:")
-        print("   python setup_llama_cpp.py --start --host 0.0.0.0 --port 50052")
+        print("\n5. Multi-node setup:")
+        print("   # Node 1 (GPU node with monitoring):")
+        print("   python setup_llama_cpp.py --all --gpu-monitoring")
+        print("\n   # Node 2 (CPU-only node):")
+        print("   python setup_llama_cpp.py --all")
+        print("\n" + "=" * 70)
+        print("RECOMMENDED BUILD:")
+        print("=" * 70)
+        print("llama.cpp build 6743+ includes stability fixes for distributed inference")
+        print("Update existing installation: cd ~/llama.cpp && git pull && python setup_llama_cpp.py --build")
         print("")
 
     return 0
