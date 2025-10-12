@@ -84,6 +84,10 @@ class OllamaPool:
         self._lock = threading.Lock()
         self._current_index = 0
 
+        # Persistent HTTP session for connection reuse
+        self.session = requests.Session()
+        self.session.headers.update({"Connection": "keep-alive"})
+
         # Auto-discover if no nodes provided
         if not self.nodes:
             self._auto_discover()
@@ -439,7 +443,8 @@ class OllamaPool:
             try:
                 logger.debug(f"Request to {url}")
 
-                response = requests.post(url, json=data, timeout=timeout)
+                # Use persistent session for connection reuse
+                response = self.session.post(url, json=data, timeout=timeout)
 
                 # Calculate latency
                 latency_ms = (time.time() - start_time) * 1000
@@ -1208,6 +1213,31 @@ class OllamaPool:
             else:
                 logger.info("VRAM refresh thread stopped successfully")
 
+        # Stop health check thread
+        self._health_check_enabled = False
+        if self._health_check_thread and self._health_check_thread.is_alive():
+            self._health_check_thread.join(timeout=5.0)
+            if self._health_check_thread.is_alive():
+                logger.warning("Health check thread did not stop within timeout")
+            else:
+                logger.info("Health check thread stopped successfully")
+
+        # Stop GPU subscriber if enabled
+        if self.gpu_subscriber:
+            try:
+                self.gpu_subscriber.stop()
+                logger.info("GPU subscriber stopped successfully")
+            except Exception as e:
+                logger.warning(f"Error stopping GPU subscriber: {e}")
+
+        # Close persistent HTTP session
+        if hasattr(self, 'session'):
+            try:
+                self.session.close()
+                logger.info("HTTP session closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing HTTP session: {e}")
+
         logger.info("OllamaPool stopped")
 
     # Async methods for concurrent request handling
@@ -1318,6 +1348,15 @@ class OllamaPool:
             None,
             lambda: self._make_request("/api/embed", data, priority=priority)
         )
+
+    def __del__(self):
+        """Cleanup when object is destroyed."""
+        try:
+            # Close session if it exists
+            if hasattr(self, 'session'):
+                self.session.close()
+        except Exception:
+            pass  # Suppress errors during cleanup
 
     def __repr__(self):
         return f"OllamaPool(nodes={len(self.nodes)}, requests={self.stats['total_requests']})"
