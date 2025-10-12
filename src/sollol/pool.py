@@ -12,6 +12,7 @@ Features full SynapticLlamas observability:
 """
 
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -714,73 +715,143 @@ class OllamaPool:
         try:
             logger.debug(f"Streaming request to {url}")
 
-            # Use streaming response
-            with self.session.post(url, json=data, timeout=timeout, stream=True) as response:
-                if response.status_code == 200:
-                    # Track success
-                    with self._lock:
-                        self.stats["successful_requests"] += 1
-                        self.stats["nodes_used"][node_key] = (
-                            self.stats["nodes_used"].get(node_key, 0) + 1
-                        )
+            # Handle streaming for httpx vs requests
+            if HTTPX_AVAILABLE and isinstance(self.session, httpx.Client):
+                # httpx streaming
+                with self.session.stream('POST', url, json=data, timeout=timeout) as response:
+                    if response.status_code == 200:
+                        # Track success
+                        with self._lock:
+                            self.stats["successful_requests"] += 1
+                            self.stats["nodes_used"][node_key] = (
+                                self.stats["nodes_used"].get(node_key, 0) + 1
+                            )
 
-                    logger.info(f"🌊 Streaming from {node_key}...")
+                        logger.info(f"🌊 Streaming from {node_key}...")
 
-                    # Yield chunks as they arrive
-                    for line in response.iter_lines():
-                        if line:
-                            try:
-                                chunk = json.loads(line)
-                                yield chunk
-                            except json.JSONDecodeError as e:
-                                logger.warning(f"Failed to decode streaming chunk: {e}")
-                                continue
+                        # Yield chunks as they arrive
+                        for line in response.iter_lines():
+                            if line:
+                                try:
+                                    chunk = json.loads(line)
+                                    yield chunk
+                                except json.JSONDecodeError as e:
+                                    logger.warning(f"Failed to decode streaming chunk: {e}")
+                                    continue
 
-                    # Calculate total latency
-                    latency_ms = (time.time() - start_time) * 1000
+                        # Calculate total latency
+                        latency_ms = (time.time() - start_time) * 1000
 
-                    # Update metrics
-                    with self._lock:
-                        perf = self.stats["node_performance"][node_key]
-                        perf["total_requests"] += 1
+                        # Update metrics
+                        with self._lock:
+                            perf = self.stats["node_performance"][node_key]
+                            perf["total_requests"] += 1
 
-                        # Update running average latency
-                        if perf["total_requests"] == 1:
-                            perf["latency_ms"] = latency_ms
-                        else:
-                            perf["latency_ms"] = (
-                                perf["latency_ms"] * (perf["total_requests"] - 1) + latency_ms
+                            # Update running average latency
+                            if perf["total_requests"] == 1:
+                                perf["latency_ms"] = latency_ms
+                            else:
+                                perf["latency_ms"] = (
+                                    perf["latency_ms"] * (perf["total_requests"] - 1) + latency_ms
+                                ) / perf["total_requests"]
+
+                            # Update success rate
+                            perf["success_rate"] = (
+                                perf["total_requests"] - perf["failed_requests"]
                             ) / perf["total_requests"]
 
-                        # Update success rate
-                        perf["success_rate"] = (
-                            perf["total_requests"] - perf["failed_requests"]
-                        ) / perf["total_requests"]
+                        # Log completion
+                        log_ollama_response(
+                            backend=node_key,
+                            model=model,
+                            latency_ms=latency_ms,
+                            status_code=response.status_code,
+                            streaming=True
+                        )
 
-                    # Log completion
-                    log_ollama_response(
-                        backend=node_key,
-                        model=model,
-                        latency_ms=latency_ms,
-                        status_code=response.status_code,
-                        streaming=True
-                    )
+                        logger.info(f"✅ Stream complete from {node_key} ({latency_ms:.1f}ms)")
 
-                    logger.info(f"✅ Stream complete from {node_key} ({latency_ms:.1f}ms)")
+                    else:
+                        latency_ms = (time.time() - start_time) * 1000
+                        self._record_failure(node_key, latency_ms)
 
-                else:
-                    latency_ms = (time.time() - start_time) * 1000
-                    self._record_failure(node_key, latency_ms)
+                        # Log error
+                        log_ollama_error(
+                            backend=node_key,
+                            model=model,
+                            error=f"HTTP {response.status_code}",
+                            latency_ms=latency_ms
+                        )
 
-                    # Log error
-                    log_ollama_error(
-                        backend=node_key,
-                        model=model,
-                        error=f"HTTP {response.status_code}",
-                        latency_ms=latency_ms
-                    )
+                        raise RuntimeError(f"Streaming failed: HTTP {response.status_code}")
+            else:
+                # requests (fallback) streaming
+                with self.session.post(url, json=data, timeout=timeout, stream=True) as response:
+                    if response.status_code == 200:
+                        # Track success
+                        with self._lock:
+                            self.stats["successful_requests"] += 1
+                            self.stats["nodes_used"][node_key] = (
+                                self.stats["nodes_used"].get(node_key, 0) + 1
+                            )
 
-                    raise RuntimeError(f"Streaming failed: HTTP {response.status_code}")
+                        logger.info(f"🌊 Streaming from {node_key}...")
+
+                        # Yield chunks as they arrive
+                        for line in response.iter_lines():
+                            if line:
+                                try:
+                                    chunk = json.loads(line)
+                                    yield chunk
+                                except json.JSONDecodeError as e:
+                                    logger.warning(f"Failed to decode streaming chunk: {e}")
+                                    continue
+
+                        # Calculate total latency
+                        latency_ms = (time.time() - start_time) * 1000
+
+                        # Update metrics
+                        with self._lock:
+                            perf = self.stats["node_performance"][node_key]
+                            perf["total_requests"] += 1
+
+                            # Update running average latency
+                            if perf["total_requests"] == 1:
+                                perf["latency_ms"] = latency_ms
+                            else:
+                                perf["latency_ms"] = (
+                                    perf["latency_ms"] * (perf["total_requests"] - 1) + latency_ms
+                                ) / perf["total_requests"]
+
+                            # Update success rate
+                            perf["success_rate"] = (
+                                perf["total_requests"] - perf["failed_requests"]
+                            ) / perf["total_requests"]
+
+                        # Log completion
+                        log_ollama_response(
+                            backend=node_key,
+                            model=model,
+                            latency_ms=latency_ms,
+                            status_code=response.status_code,
+                            streaming=True
+                        )
+
+                        logger.info(f"✅ Stream complete from {node_key} ({latency_ms:.1f}ms)")
+
+                    else:
+                        latency_ms = (time.time() - start_time) * 1000
+                        self._record_failure(node_key, latency_ms)
+
+                        # Log error
+                        log_ollama_error(
+                            backend=node_key,
+                            model=model,
+                            error=f"HTTP {response.status_code}",
+                            latency_ms=latency_ms
+                        )
+
+                        raise RuntimeError(f"Streaming failed: HTTP {response.status_code}")
 
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
@@ -840,7 +911,7 @@ class OllamaPool:
         # Remote node - query via Ollama API
         try:
             url = f"http://{host}:{port}/api/ps"
-            response = requests.get(url, timeout=2.0)
+            response = self.session.get(url, timeout=2.0)
 
             if response.status_code == 200:
                 ps_data = response.json()
@@ -1023,7 +1094,7 @@ class OllamaPool:
 
             # Check if dashboard is running (quick timeout to avoid blocking startup)
             dashboard_url = "http://localhost:8080"
-            test_response = requests.get(f"{dashboard_url}/api/applications", timeout=0.5)
+            test_response = self.session.get(f"{dashboard_url}/api/applications", timeout=0.5)
 
             if test_response.status_code == 200:
                 # Dashboard is running, auto-register
@@ -1056,7 +1127,7 @@ class OllamaPool:
                     auto_register=True
                 )
                 logger.info(f"✅ Auto-registered with SOLLOL dashboard at {dashboard_url}")
-        except (requests.exceptions.RequestException, ImportError, Exception) as e:
+        except (ImportError, Exception) as e:
             # Dashboard not running or not available - silent failure is fine
             logger.debug(f"Dashboard auto-registration skipped: {e}")
             self._dashboard_client = None
@@ -1227,34 +1298,30 @@ class OllamaPool:
                                 )
 
                                 # Log to InfluxDB time-series metrics
-                                    log_node_health(
-                                        node_url=f"http://{node['host']}:{node['port']}",
-                                        healthy=False,
-                                        latency_ms=latency_ms,
-                                        failure_count=perf_data.get('failure_count', 0)
+                                log_node_health(
+                                    node_url=f"http://{node['host']}:{node['port']}",
+                                    healthy=False,
+                                    latency_ms=latency_ms,
+                                    failure_count=perf_data.get('failure_count', 0)
+                                )
+
+                                # Log status change if needed
+                                if old_status != new_status:
+                                    log_node_status_change(
+                                        backend=node_key,
+                                        old_status=old_status,
+                                        new_status=new_status
                                     )
 
-                                    # Log status change if needed
-                                    if old_status != new_status:
-                                        log_node_status_change(
-                                            backend=node_key,
-                                            old_status=old_status,
-                                            new_status=new_status
-                                        )
+                                logger.warning(
+                                    f"⚠️  Health check {node_key}: HTTP {response.status_code}"
+                                )
 
-                                    logger.warning(
-                                        f"⚠️  Health check {node_key}: HTTP {response.status_code}"
-                                    )
-
-                            except requests.exceptions.Timeout:
-                                # Node timed out
-                                self.stats["node_performance"][node_key]["available"] = False
-                                logger.warning(f"⚠️  Health check {node_key}: timeout (>2s)")
-
-                            except requests.exceptions.RequestException as e:
-                                # Node unreachable
-                                self.stats["node_performance"][node_key]["available"] = False
-                                logger.warning(f"⚠️  Health check {node_key}: unreachable ({e})")
+                        except (TimeoutError, Exception) as e:
+                            # Node timed out or unreachable
+                            self.stats["node_performance"][node_key]["available"] = False
+                            error_msg = "timeout" if isinstance(e, TimeoutError) or "timeout" in str(e).lower() else f"unreachable ({e})"
+                            logger.warning(f"⚠️  Health check {node_key}: {error_msg}")
 
             except Exception as e:
                 logger.error(f"Health check loop error: {e}")
