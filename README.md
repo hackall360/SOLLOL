@@ -6,6 +6,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/tests.yml/badge.svg)](https://github.com/BenevolentJoker-JohnL/SOLLOL/actions/workflows/tests.yml)
 [![codecov](https://codecov.io/gh/BenevolentJoker-JohnL/SOLLOL/branch/main/graph/badge.svg)](https://codecov.io/gh/BenevolentJoker-JohnL/SOLLOL)
+[![Ollama](https://img.shields.io/badge/Ollama-Compatible-green.svg)](https://ollama.ai/)
+[![llama.cpp](https://img.shields.io/badge/llama.cpp-Integrated-orange.svg)](https://github.com/ggerganov/llama.cpp)
 
 **Open-source orchestration layer that combines intelligent task routing with distributed model inference for local LLM clusters.**
 
