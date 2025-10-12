@@ -106,8 +106,8 @@ After the fix, the dashboard will now correctly display:
 ### After (Fixed)
 ```
 🔗 RPC Backends (llama.cpp)
-- 10.9.66.48:50052 (7.5 ms, 125 requests, 0 failures) ✅
-- 10.9.66.154:50052 (5.2 ms, 89 requests, 0 failures) ✅
+- node1:50052 (7.5 ms, 125 requests, 0 failures) ✅
+- node2:50052 (5.2 ms, 89 requests, 0 failures) ✅
 ```
 
 ## API Response Structure
@@ -118,14 +118,14 @@ The `/api/network/backends` endpoint now returns:
 {
   "backends": [
     {
-      "url": "10.9.66.48:50052",
+      "url": "node1:50052",
       "status": "healthy",
       "latency_ms": 7.5,
       "request_count": 125,
       "failure_count": 0
     },
     {
-      "url": "10.9.66.154:50052",
+      "url": "node2:50052",
       "status": "healthy",
       "latency_ms": 5.2,
       "request_count": 89,
@@ -142,10 +142,10 @@ To verify the fix works:
 
 1. **Start RPC backends:**
    ```bash
-   # On machine 1 (10.9.66.48)
+   # On machine 1
    rpc-server --host 0.0.0.0 --port 50052
 
-   # On machine 2 (10.9.66.154)
+   # On machine 2
    rpc-server --host 0.0.0.0 --port 50052
    ```
 
