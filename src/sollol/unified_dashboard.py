@@ -1807,40 +1807,43 @@ UNIFIED_DASHBOARD_HTML = """
             }
         }, 30000);
 
-        // WebSocket connections for activity logs
-        function connectActivityLogs() {
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsHost = window.location.host;
+        // WebSocket connections for activity logs - fixed to prevent reconnection storm
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost = window.location.host;
 
-            // Ollama Activity WebSocket
-            const ollamaWs = new WebSocket(`${wsProtocol}//${wsHost}/ws/network/ollama_activity`);
+        // Track WebSocket objects globally to prevent duplicates
+        let ollamaWs = null;
+        let rpcWs = null;
+        let routingWs = null;
+        let reconnecting = {ollama: false, rpc: false, routing: false};
+
+        function connectOllama() {
+            if (ollamaWs && ollamaWs.readyState === WebSocket.OPEN) return;
+            if (reconnecting.ollama) return;
+
             const ollamaActivity = document.getElementById('ollama-activity');
 
-            ollamaWs.onopen = () => {
-                // Don't clear the div - let the first WebSocket message display connection status
-            };
+            if (ollamaWs) {
+                try { ollamaWs.close(); } catch(e) {}
+            }
+
+            ollamaWs = new WebSocket(`${wsProtocol}//${wsHost}/ws/network/ollama_activity`);
 
             ollamaWs.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-
-                    // Clear initial "Connecting..." message on first real message
                     if (ollamaActivity.querySelector('div[style*="text-align: center"]')) {
                         ollamaActivity.innerHTML = '';
                     }
-
                     const entry = document.createElement('div');
                     entry.style.padding = '0.25rem 0';
                     entry.style.borderBottom = '1px solid #1e293b';
                     entry.style.fontSize = '0.875rem';
-
-                    // Style connection messages differently
                     if (data.type === 'connected') {
                         entry.style.color = '#10b981';
                         entry.style.padding = '0.5rem';
                         entry.style.borderBottom = 'none';
                     }
-
                     entry.textContent = data.message || event.data;
                     ollamaActivity.appendChild(entry);
                     ollamaActivity.scrollTop = ollamaActivity.scrollHeight;
@@ -1854,41 +1857,44 @@ UNIFIED_DASHBOARD_HTML = """
             };
 
             ollamaWs.onclose = () => {
-                setTimeout(() => {
-                    ollamaActivity.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
-                    connectActivityLogs();
-                }, 5000);
+                if (!reconnecting.ollama) {
+                    reconnecting.ollama = true;
+                    setTimeout(() => {
+                        ollamaActivity.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
+                        reconnecting.ollama = false;
+                        connectOllama();
+                    }, 5000);
+                }
             };
+        }
 
-            // llama.cpp Activity WebSocket
-            const rpcWs = new WebSocket(`${wsProtocol}//${wsHost}/ws/network/rpc_activity`);
+        function connectRPC() {
+            if (rpcWs && rpcWs.readyState === WebSocket.OPEN) return;
+            if (reconnecting.rpc) return;
+
             const rpcActivity = document.getElementById('rpc-activity');
 
-            rpcWs.onopen = () => {
-                // Don't clear the div - let the first WebSocket message display connection status
-            };
+            if (rpcWs) {
+                try { rpcWs.close(); } catch(e) {}
+            }
+
+            rpcWs = new WebSocket(`${wsProtocol}//${wsHost}/ws/network/rpc_activity`);
 
             rpcWs.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-
-                    // Clear initial "Connecting..." message on first real message
                     if (rpcActivity.querySelector('div[style*="text-align: center"]')) {
                         rpcActivity.innerHTML = '';
                     }
-
                     const entry = document.createElement('div');
                     entry.style.padding = '0.25rem 0';
                     entry.style.borderBottom = '1px solid #1e293b';
                     entry.style.fontSize = '0.875rem';
-
-                    // Style connection messages differently
                     if (data.type === 'connected') {
                         entry.style.color = '#10b981';
                         entry.style.padding = '0.5rem';
                         entry.style.borderBottom = 'none';
                     }
-
                     entry.textContent = data.message || event.data;
                     rpcActivity.appendChild(entry);
                     rpcActivity.scrollTop = rpcActivity.scrollHeight;
@@ -1902,61 +1908,60 @@ UNIFIED_DASHBOARD_HTML = """
             };
 
             rpcWs.onclose = () => {
-                setTimeout(() => {
-                    rpcActivity.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
-                    connectActivityLogs();
-                }, 5000);
+                if (!reconnecting.rpc) {
+                    reconnecting.rpc = true;
+                    setTimeout(() => {
+                        rpcActivity.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
+                        reconnecting.rpc = false;
+                        connectRPC();
+                    }, 5000);
+                }
             };
+        }
 
-            // SOLLOL Routing Events WebSocket
-            const routingWs = new WebSocket(`${wsProtocol}//${wsHost}/ws/routing_events`);
+        function connectRouting() {
+            if (routingWs && routingWs.readyState === WebSocket.OPEN) return;
+            if (reconnecting.routing) return;
+
             const routingEvents = document.getElementById('routing-events');
 
-            routingWs.onopen = () => {
-                // Don't clear the div - let the first WebSocket message display connection status
-            };
+            if (routingWs) {
+                try { routingWs.close(); } catch(e) {}
+            }
+
+            routingWs = new WebSocket(`${wsProtocol}//${wsHost}/ws/routing_events`);
 
             routingWs.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-
-                    // Clear initial "Connecting..." message on first real message
                     if (routingEvents.querySelector('div[style*="text-align: center"]')) {
                         routingEvents.innerHTML = '';
                     }
-
                     const entry = document.createElement('div');
                     entry.style.padding = '0.25rem 0';
                     entry.style.borderBottom = '1px solid #1e293b';
                     entry.style.fontSize = '0.875rem';
-
-                    // Style based on event type
                     const eventType = data.event_type;
                     if (data.type === 'connected') {
                         entry.style.color = '#10b981';
                         entry.style.padding = '0.5rem';
                         entry.style.borderBottom = 'none';
                     } else if (eventType === 'ROUTE_DECISION') {
-                        entry.style.color = '#22d3ee'; // cyan
+                        entry.style.color = '#22d3ee';
                     } else if (eventType === 'FALLBACK_TRIGGERED') {
-                        entry.style.color = '#f59e0b'; // yellow
+                        entry.style.color = '#f59e0b';
                     } else if (eventType === 'COORDINATOR_START') {
-                        entry.style.color = '#10b981'; // green
+                        entry.style.color = '#10b981';
                     } else if (eventType === 'COORDINATOR_STOP') {
-                        entry.style.color = '#ef4444'; // red
+                        entry.style.color = '#ef4444';
                     } else if (eventType === 'CACHE_HIT') {
-                        entry.style.color = '#60a5fa'; // blue
+                        entry.style.color = '#60a5fa';
                     } else {
-                        entry.style.color = '#e2e8f0'; // default
+                        entry.style.color = '#e2e8f0';
                     }
-
                     entry.textContent = data.message || event.data;
                     routingEvents.appendChild(entry);
-
-                    // Auto-scroll to bottom
                     routingEvents.scrollTop = routingEvents.scrollHeight;
-
-                    // Keep only last 100 entries to prevent memory issues
                     while (routingEvents.children.length > 100) {
                         routingEvents.removeChild(routingEvents.firstChild);
                     }
@@ -1970,15 +1975,21 @@ UNIFIED_DASHBOARD_HTML = """
             };
 
             routingWs.onclose = () => {
-                setTimeout(() => {
-                    routingEvents.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
-                    connectActivityLogs();
-                }, 5000);
+                if (!reconnecting.routing) {
+                    reconnecting.routing = true;
+                    setTimeout(() => {
+                        routingEvents.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
+                        reconnecting.routing = false;
+                        connectRouting();
+                    }, 5000);
+                }
             };
         }
 
-        // Connect on page load
-        connectActivityLogs();
+        // Connect all WebSockets on page load
+        connectOllama();
+        connectRPC();
+        connectRouting();
     </script>
 </body>
 </html>

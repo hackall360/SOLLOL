@@ -19,6 +19,7 @@ Ollama's simple API.
 """
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -98,6 +99,7 @@ class HybridRouter:
         auto_setup_rpc: bool = False,
         num_rpc_backends: int = 1,
         auto_fallback: bool = True,
+        debug_coordinator_recovery: bool = False,
     ):
         """
         Initialize hybrid router with automatic GGUF resolution from Ollama.
@@ -113,9 +115,16 @@ class HybridRouter:
             auto_setup_rpc: Auto-setup RPC backends if none found (requires llama.cpp)
             num_rpc_backends: Number of RPC backends to start if auto-setup is enabled
             auto_fallback: Automatically fallback to RPC if Ollama fails (default: True)
+            debug_coordinator_recovery: Enable verbose logging for coordinator crash recovery (default: False)
+                                       Can also be enabled via SOLLOL_DEBUG_COORDINATOR_RECOVERY=true env var
         """
         self.ollama_pool = ollama_pool
         self.auto_fallback = auto_fallback
+        # Allow environment variable to override debug setting
+        self.debug_coordinator_recovery = (
+            debug_coordinator_recovery or
+            os.getenv("SOLLOL_DEBUG_COORDINATOR_RECOVERY", "").lower() in ("true", "1", "yes", "on")
+        )
 
         # Cache for routing decisions (model -> use_rpc)
         self.routing_cache = {}
@@ -185,7 +194,6 @@ class HybridRouter:
         )
 
         # Auto-start observability dashboard (configurable via ENV)
-        import os
         self.dashboard = None
         self.dashboard_enabled = os.getenv("SOLLOL_DASHBOARD", "true").lower() in ("true", "1", "yes", "on")
         self.dashboard_port = int(os.getenv("SOLLOL_DASHBOARD_PORT", "8080"))
@@ -522,16 +530,67 @@ class HybridRouter:
         2. Starts the coordinator with the correct model
         3. Distributes model layers across RPC backends
         4. Makes the inference request
+        5. Handles coordinator crashes with automatic retry
         """
         # Ensure coordinator is started with correct model (auto-resolves GGUF!)
         await self._ensure_coordinator_for_model(model)
 
-        # Use the coordinator's chat method (which uses /v1/chat/completions endpoint)
-        result = await self.coordinator.chat(
-            messages=messages,
-            max_tokens=kwargs.get("max_tokens", 512),
-            temperature=kwargs.get("temperature", 0.7),
-        )
+        # Use the coordinator's chat method with crash recovery
+        try:
+            result = await self.coordinator.chat(
+                messages=messages,
+                max_tokens=kwargs.get("max_tokens", 512),
+                temperature=kwargs.get("temperature", 0.7),
+            )
+        except Exception as e:
+            # Coordinator crashed or failed - attempt recovery once
+            logger.warning(f"⚠️  Coordinator failed for '{model}': {str(e)[:100]}")
+
+            if self.debug_coordinator_recovery:
+                logger.info("🔄 Attempting coordinator recovery (restarting)...")
+            else:
+                logger.debug("Attempting coordinator recovery (restarting)...")
+
+            try:
+                # Stop and clear the failed coordinator
+                if self.coordinator:
+                    if self.debug_coordinator_recovery:
+                        logger.debug("Stopping failed coordinator...")
+                    try:
+                        await self.coordinator.stop()
+                    except:
+                        pass  # Ignore errors stopping crashed coordinator
+                    self.coordinator = None
+                    self.coordinator_model = None
+
+                # Restart coordinator with fresh instance
+                if self.debug_coordinator_recovery:
+                    logger.debug(f"Restarting coordinator for model '{model}'...")
+                await self._ensure_coordinator_for_model(model)
+
+                # Retry the request once
+                if self.debug_coordinator_recovery:
+                    logger.info("✅ Coordinator restarted, retrying request...")
+                else:
+                    logger.debug("Coordinator restarted, retrying request...")
+
+                result = await self.coordinator.chat(
+                    messages=messages,
+                    max_tokens=kwargs.get("max_tokens", 512),
+                    temperature=kwargs.get("temperature", 0.7),
+                )
+
+                if self.debug_coordinator_recovery:
+                    logger.info("✅ Request succeeded after coordinator restart")
+                else:
+                    logger.debug("Request succeeded after coordinator restart")
+
+            except Exception as retry_error:
+                # Recovery failed - log and re-raise
+                logger.error(f"❌ Coordinator recovery failed: {retry_error}")
+                raise RuntimeError(
+                    f"Coordinator failed and recovery attempt unsuccessful: {retry_error}"
+                ) from retry_error
 
         # Convert to Ollama-style response
         return self._convert_llamacpp_to_ollama(result, model)

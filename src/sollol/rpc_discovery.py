@@ -93,8 +93,9 @@ def discover_rpc_backends(
             ip = futures[future]
             try:
                 if future.result():
-                    # Skip localhost - coordinator runs on same machine, no distribution benefit
+                    # Skip only localhost/127.0.0.1 (network IPs are valid for distribution)
                     if ip in ["127.0.0.1", "localhost"]:
+                        logger.debug(f"   ⏭️  Skipping localhost: {ip}:{port}")
                         continue
                     logger.info(f"   ✅ Found RPC server: {ip}:{port}")
                     backends.append({"host": ip, "port": port})

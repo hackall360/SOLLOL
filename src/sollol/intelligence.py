@@ -193,6 +193,7 @@ class IntelligentRouter:
             "embedding",
             "summarization",
             "analysis",
+            "extraction",  # PDF extraction benefits from GPU
         ] and complexity in ["medium", "complex"]
 
         # Estimate duration based on historical data

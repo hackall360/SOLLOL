@@ -93,6 +93,12 @@ from sollol.rpc_auto_setup import RPCAutoSetup, auto_setup_rpc_backends
 from sollol.rpc_discovery import auto_discover_rpc_backends, check_rpc_server
 from sollol.rpc_registry import RPCBackendRegistry
 
+# Adaptive parallelism
+from sollol.adaptive_parallelism import AdaptiveParallelismStrategy
+
+# GPU monitoring
+from sollol.gpu_redis_subscriber import GPURedisSubscriber
+
 # Legacy support
 from sollol.sollol import SOLLOL
 
@@ -145,6 +151,10 @@ __all__ = [
     "is_running_in_docker",
     "get_docker_network_mode",
     "get_deployment_context",
+    # Adaptive Parallelism
+    "AdaptiveParallelismStrategy",
+    # GPU Monitoring
+    "GPURedisSubscriber",
     # Legacy
     "SOLLOL",
     "SOLLOLConfig",

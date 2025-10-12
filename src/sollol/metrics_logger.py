@@ -68,7 +68,7 @@ def _initialize():
         _bucket = os.getenv("INFLUX_BUCKET", "sollol_metrics")
 
         if not token:
-            logger.warning("⚠️  INFLUX_TOKEN not set - metrics logging disabled")
+            logger.debug("InfluxDB metrics disabled (INFLUX_TOKEN not set)")
             _enabled = False
             return
 
@@ -81,8 +81,7 @@ def _initialize():
         logger.info(f"✅ InfluxDB metrics enabled: {url} → bucket={_bucket}")
 
     except ImportError:
-        logger.warning("⚠️  influxdb-client not installed - metrics logging disabled")
-        logger.info("   Install with: pip install influxdb-client")
+        logger.debug("InfluxDB metrics disabled (influxdb-client not installed)")
         _enabled = False
     except Exception as e:
         logger.error(f"❌ Failed to initialize InfluxDB client: {e}")

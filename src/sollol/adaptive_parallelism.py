@@ -24,23 +24,22 @@ class AdaptiveParallelismStrategy:
     Intelligently decides whether to use parallel or sequential processing
     based on real-time performance metrics.
 
-    Integrates with SOLLOL's NodeRegistry and routing intelligence to avoid
-    wasteful parallelization when cluster characteristics don't favor it.
+    Works directly with OllamaPool's nodes and stats['node_performance'] structure.
     """
 
-    def __init__(self, node_registry=None):
+    def __init__(self, pool=None):
         """
         Initialize adaptive parallelism strategy.
 
         Args:
-            node_registry: NodeRegistry instance (optional, can be set later)
+            pool: OllamaPool instance (optional, can be set later)
         """
-        self.registry = node_registry
+        self.pool = pool
         self.performance_history = []  # Track decisions and results
 
-    def set_registry(self, registry):
-        """Set the NodeRegistry after initialization."""
-        self.registry = registry
+    def set_pool(self, pool):
+        """Set the OllamaPool after initialization."""
+        self.pool = pool
 
     def should_parallelize(self, batch_size: int, model_name: Optional[str] = None) -> Tuple[bool, Dict]:
         """
@@ -53,41 +52,52 @@ class AdaptiveParallelismStrategy:
         Returns:
             (should_parallelize: bool, reasoning: Dict)
         """
-        if not self.registry:
-            logger.warning("No NodeRegistry set, defaulting to sequential")
-            return False, {"reason": "no_registry", "detail": "No node registry configured"}
+        if not self.pool:
+            logger.warning("No OllamaPool set, defaulting to parallel")
+            return True, {"reason": "no_pool", "detail": "No pool configured, using parallel by default"}
 
-        nodes = list(self.registry.nodes.values())
+        nodes = self.pool.nodes
+        node_performance = self.pool.stats.get("node_performance", {})
 
-        # Get available nodes (exclude unhealthy)
-        available_nodes = [n for n in nodes if n.is_healthy]
-
-        if len(available_nodes) <= 1:
-            return False, {
+        # CASE 0: Single node - always parallel (will use multiple workers on same node)
+        if len(nodes) <= 1:
+            return True, {
                 "reason": "single_node",
-                "detail": "Only one healthy node available, sequential is optimal",
-                "available_nodes": len(available_nodes),
+                "detail": "Single node - using parallel workers for better performance",
+                "available_nodes": len(nodes),
             }
 
         # Calculate performance metrics
         node_speeds = []
 
-        for node in available_nodes:
-            # Get node's health and performance metrics
-            has_gpu = node.capabilities.has_gpu
-            avg_latency = node.metrics.get_avg_latency()
+        for node in nodes:
+            node_key = f"{node['host']}:{node['port']}"
+            stats = node_performance.get(node_key, {})
 
-            # Estimate speed score (higher = faster)
-            if has_gpu:
-                # GPU nodes are generally much faster
-                speed_score = 100 / max(avg_latency, 0.01)
+            # Calculate speed score based on stats
+            total_requests = stats.get("total_requests", 0)
+            failed_requests = stats.get("failed_requests", 0)
+            successful_requests = total_requests - failed_requests
+            avg_latency_ms = stats.get("latency_ms", 0.0)
+
+            if successful_requests > 0 and avg_latency_ms > 0:
+                # Use average latency (lower = faster)
+                # Convert ms to seconds for speed score
+                avg_latency = avg_latency_ms / 1000.0
+                speed_score = 1.0 / max(avg_latency, 0.01)  # Higher = faster
             else:
-                # CPU nodes are slower
-                speed_score = 10 / max(avg_latency, 0.01)
+                # Estimate based on availability
+                is_available = stats.get("available", True)
+                speed_score = 50 if is_available else 1  # Assume available = reasonably fast
 
-            node_speeds.append({"node": node.url, "speed_score": speed_score, "has_gpu": has_gpu})
+            node_speeds.append({
+                "node": node_key,
+                "speed_score": speed_score,
+                "total_requests": total_requests,
+                "is_available": stats.get("available", True)
+            })
 
-        # Sort by speed
+        # Sort by speed (fastest first)
         node_speeds.sort(key=lambda x: x["speed_score"], reverse=True)
 
         fastest_node = node_speeds[0]
@@ -98,7 +108,7 @@ class AdaptiveParallelismStrategy:
 
         # Decision logic
         reasoning = {
-            "available_nodes": len(available_nodes),
+            "available_nodes": len(nodes),
             "batch_size": batch_size,
             "fastest_node": fastest_node["node"],
             "fastest_speed": fastest_node["speed_score"],
@@ -106,8 +116,8 @@ class AdaptiveParallelismStrategy:
         }
 
         # CASE 1: One GPU node is 5x+ faster than others
-        if speed_ratio >= 5.0:
-            # Sequential on fastest node is better
+        if speed_ratio >= 5.0 and fastest_node["total_requests"] >= 5:
+            # Sequential on fastest node is better (only if we have enough data)
             return False, {
                 **reasoning,
                 "reason": "dominant_node",
@@ -132,25 +142,24 @@ class AdaptiveParallelismStrategy:
                 **reasoning,
                 "reason": "balanced_cluster",
                 "detail": f"Speed ratio {speed_ratio:.1f}x - parallel is efficient",
-                "parallel_workers": len(available_nodes) * 2,
+                "parallel_workers": len(nodes) * 2,
             }
 
         # CASE 4: Medium speed difference (3-5x)
         # Use fastest 2-3 nodes in parallel
-        if speed_ratio < 5.0 and len(available_nodes) >= 3:
+        if speed_ratio < 5.0 and len(nodes) >= 3:
             return True, {
                 **reasoning,
                 "reason": "hybrid_parallel",
-                "detail": f"Using top {min(3, len(available_nodes))} nodes in parallel",
-                "parallel_workers": min(3, len(available_nodes)) * 2,
+                "detail": f"Using top {min(3, len(nodes))} nodes in parallel",
+                "parallel_workers": min(3, len(nodes)) * 2,
             }
 
-        # Default: Sequential on fastest
-        return False, {
+        # Default: Parallel (safer default for SOLLOL)
+        return True, {
             **reasoning,
-            "reason": "default_sequential",
-            "detail": "Defaulting to sequential on fastest node",
-            "recommended_node": fastest_node["node"],
+            "reason": "default_parallel",
+            "detail": "Defaulting to parallel for better performance",
         }
 
     def get_optimal_workers(self, batch_size: int) -> int:
@@ -163,17 +172,22 @@ class AdaptiveParallelismStrategy:
         Returns:
             Number of workers (minimum 1)
         """
-        if not self.registry:
-            return 1
+        if not self.pool:
+            return min(4, batch_size)  # Default: 4 workers
 
-        available_nodes = [n for n in self.registry.nodes.values() if n.is_healthy]
+        nodes = self.pool.nodes
 
         # Base workers on number of nodes
-        base_workers = len(available_nodes) * 2
+        base_workers = len(nodes) * 2
 
         # Adjust for batch size
-        # Don't create more workers than items
-        workers = min(base_workers, batch_size)
+        if batch_size < 50:
+            workers = min(base_workers, batch_size)
+        elif batch_size < 200:
+            workers = base_workers
+        else:
+            # Large batch, can use more workers
+            workers = min(base_workers * 2, batch_size)
 
         # Minimum 1 worker
         return max(1, workers)
@@ -182,31 +196,79 @@ class AdaptiveParallelismStrategy:
         """
         Get the recommended node for sequential execution.
 
+        Prefers GPU nodes but falls back to CPU if needed.
+        Important: GPU nodes might be set to CPU generation mode.
+
         Args:
             model_name: Model name (for GPU-specific routing)
 
         Returns:
-            Node URL or None
+            Node URL (host:port) or None
         """
-        if not self.registry:
+        if not self.pool:
             return None
 
-        available_nodes = [n for n in self.registry.nodes.values() if n.is_healthy]
+        nodes = self.pool.nodes
+        node_performance = self.pool.stats.get("node_performance", {})
+
+        if not nodes:
+            return None
+
+        # Calculate node performance scores
+        node_info = []
+        for node in nodes:
+            node_key = f"{node['host']}:{node['port']}"
+            stats = node_performance.get(node_key, {})
+
+            # Get performance metrics
+            total_requests = stats.get("total_requests", 0)
+            failed_requests = stats.get("failed_requests", 0)
+            successful_requests = total_requests - failed_requests
+            avg_latency_ms = stats.get("latency_ms", 0.0)
+
+            if successful_requests > 0 and avg_latency_ms > 0:
+                # Use average latency in seconds
+                avg_latency = avg_latency_ms / 1000.0
+            else:
+                avg_latency = 999.0  # High default for untested nodes
+
+            # Check if node is available
+            is_available = stats.get("available", True)
+
+            # Try to detect GPU capability from stats or node info
+            has_gpu = node.get("has_gpu", False)
+
+            node_info.append({
+                "key": node_key,
+                "node": node,
+                "avg_latency": avg_latency,
+                "has_gpu": has_gpu,
+                "is_available": is_available,
+                "successful_requests": successful_requests
+            })
+
+        # Filter to available nodes only
+        available_nodes = [n for n in node_info if n["is_available"]]
 
         if not available_nodes:
-            return None
+            # No available nodes, return fastest regardless of availability
+            logger.warning("No available nodes, selecting fastest node")
+            fastest = min(node_info, key=lambda n: n["avg_latency"])
+            return fastest["key"]
 
         # Prefer GPU nodes for most models
-        gpu_nodes = [n for n in available_nodes if n.capabilities.has_gpu]
+        gpu_nodes = [n for n in available_nodes if n["has_gpu"]]
 
         if gpu_nodes:
             # Return fastest GPU node (lowest avg latency)
-            fastest_gpu = min(gpu_nodes, key=lambda n: n.metrics.get_avg_latency())
-            return fastest_gpu.url
+            fastest_gpu = min(gpu_nodes, key=lambda n: n["avg_latency"])
+            logger.debug(f"Selected GPU node: {fastest_gpu['key']} (latency: {fastest_gpu['avg_latency']:.3f}s)")
+            return fastest_gpu["key"]
 
         # Fallback to fastest CPU node
-        fastest_cpu = min(available_nodes, key=lambda n: n.metrics.get_avg_latency())
-        return fastest_cpu.url
+        fastest_cpu = min(available_nodes, key=lambda n: n["avg_latency"])
+        logger.debug(f"Selected CPU node: {fastest_cpu['key']} (latency: {fastest_cpu['avg_latency']:.3f}s)")
+        return fastest_cpu["key"]
 
     def print_parallelism_report(self, batch_size: int):
         """

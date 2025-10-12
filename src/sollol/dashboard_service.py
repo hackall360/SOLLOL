@@ -206,6 +206,86 @@ class DashboardService:
         self.ray_dashboard_port = ray_dashboard_port
         self.dask_dashboard_port = dask_dashboard_port
         self.enable_dask = enable_dask
+        self.dask_client = None
+
+        # Initialize Dask if requested
+        if enable_dask:
+            try:
+                from dask.distributed import LocalCluster, Client
+                import dask
+                import os
+
+                # Set environment variables before cluster creation
+                os.environ['DASK_DISTRIBUTED__LOGGING__DISTRIBUTED'] = 'error'
+                os.environ['DASK_LOGGING__DISTRIBUTED'] = 'error'
+
+                dask.config.set({"distributed.worker.daemon": False})
+                dask.config.set({"distributed.logging.distributed": "error"})
+                dask.config.set({"logging.distributed": "error"})
+                dask.config.set({"distributed.admin.tick.interval": "500ms"})
+
+                # Try to connect to existing Dask scheduler first (multi-app coordination)
+                try:
+                    logger.info("🔍 Attempting to connect to existing Dask scheduler...")
+                    # Try default scheduler address
+                    self.dask_client = Client("tcp://127.0.0.1:8786", timeout=2)
+                    logger.info(f"✅ Connected to existing Dask scheduler at {self.dask_client.scheduler.address}")
+                except Exception as e:
+                    # No existing scheduler, create local cluster
+                    logger.info("🚀 Starting new Dask cluster (no existing scheduler found)")
+
+                    cluster = LocalCluster(
+                        n_workers=1,
+                        threads_per_worker=2,
+                        processes=False,  # Use threads, not separate processes
+                        dashboard_address=f":{dask_dashboard_port}",
+                        silence_logs=logging.CRITICAL,
+                    )
+
+                    logger.info("📊 Dask cluster using threaded workers (shared logging context)")
+                    self.dask_client = Client(cluster)
+
+                # Add filter to ALL handlers to block "Task queue depth" warnings
+                # This catches warnings from threaded workers at the handler level
+                class DaskWarningFilter(logging.Filter):
+                    def filter(self, record):
+                        return 'Task queue depth' not in record.getMessage()
+
+                dask_filter = DaskWarningFilter()
+
+                # Apply filter to root logger AND all its handlers
+                logging.root.addFilter(dask_filter)
+                for handler in logging.root.handlers:
+                    handler.addFilter(dask_filter)
+
+                # Apply to all distributed loggers and their handlers
+                for logger_name in ['distributed', 'distributed.worker', 'distributed.scheduler',
+                                   'distributed.core', 'distributed.comm']:
+                    dist_logger = logging.getLogger(logger_name)
+                    dist_logger.addFilter(dask_filter)
+                    dist_logger.setLevel(logging.CRITICAL)
+                    for handler in dist_logger.handlers:
+                        handler.addFilter(dask_filter)
+
+                # Get actual dashboard URL from client (may be on different port if 8787 was taken)
+                if hasattr(self.dask_client, 'dashboard_link'):
+                    actual_dashboard_url = self.dask_client.dashboard_link
+                    # Extract port from URL like http://127.0.0.1:45423/status
+                    import re
+                    port_match = re.search(r':(\d+)', actual_dashboard_url)
+                    if port_match:
+                        self.dask_dashboard_port = int(port_match.group(1))
+                        logger.info(f"📊 Dask dashboard available at http://127.0.0.1:{self.dask_dashboard_port}")
+
+                logger.info(f"✅ Dask initialized: {self.dask_client}")
+            except ImportError:
+                logger.warning("⚠️  Dask not installed, dashboard will not show Dask metrics")
+                self.enable_dask = False
+                self.dask_client = None
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Dask: {e}")
+                self.enable_dask = False
+                self.dask_client = None
 
         # Redis clients (one for pub/sub, one for regular ops)
         self.redis_client = redis.from_url(redis_url, decode_responses=True)
@@ -401,9 +481,41 @@ class DashboardService:
             try:
                 backends = rpc_backends().get_json()
                 if isinstance(backends, list):
-                    return jsonify({"backends": backends, "total": len(backends)})
+                    # Enrich backends with health status for dashboard
+                    enriched = []
+                    for backend in backends:
+                        host = backend.get('host', 'unknown')
+                        port = backend.get('port', 50052)
+                        url = f"{host}:{port}"
+
+                        # Try quick health check
+                        import socket
+                        is_healthy = False
+                        latency_ms = 0
+                        try:
+                            start = time.time()
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            sock.settimeout(1.0)
+                            result = sock.connect_ex((host, port))
+                            sock.close()
+                            latency_ms = int((time.time() - start) * 1000)
+                            is_healthy = (result == 0)
+                        except Exception:
+                            is_healthy = False
+
+                        enriched.append({
+                            "host": host,
+                            "port": port,
+                            "url": url,
+                            "status": "healthy" if is_healthy else "offline",
+                            "latency_ms": latency_ms,
+                            "request_count": 0,  # TODO: Track in Redis
+                            "failure_count": 0,  # TODO: Track in Redis
+                        })
+                    return jsonify({"backends": enriched, "total": len(enriched)})
                 return jsonify(backends)
             except Exception as e:
+                logger.error(f"Error in network_backends: {e}")
                 return jsonify({"backends": [], "total": 0, "error": str(e)})
 
         @self.app.route("/api/dashboard")
@@ -537,13 +649,42 @@ class DashboardService:
 
         @self.app.route("/api/dask/metrics")
         def dask_metrics():
-            """Get Dask metrics (placeholder)."""
+            """Get Dask metrics from live cluster."""
             try:
-                # TODO: Get actual Dask metrics
-                return jsonify({"status": "ok", "workers": 0})
+                if not self.enable_dask or not self.dask_client:
+                    return jsonify({
+                        "enabled": False,
+                        "dashboard_url": None,
+                        "workers": 0,
+                        "status": "disabled"
+                    })
+
+                # Get scheduler info
+                scheduler_info = self.dask_client.scheduler_info()
+                workers = scheduler_info.get('workers', {})
+
+                # Calculate total cores and memory
+                total_cores = sum(w.get('nthreads', 0) for w in workers.values())
+                total_memory = sum(w.get('memory_limit', 0) for w in workers.values())
+
+                # Get task info
+                tasks = scheduler_info.get('tasks', {})
+                processing = len([t for t in tasks.values() if t.get('state') == 'processing'])
+
+                return jsonify({
+                    "enabled": True,
+                    "dashboard_url": f"http://127.0.0.1:{self.dask_dashboard_port}",
+                    "workers": len(workers),
+                    "total_cores": total_cores,
+                    "total_memory_gb": round(total_memory / (1024**3), 2),
+                    "tasks_processing": processing,
+                    "tasks_total": len(tasks),
+                    "scheduler_address": self.dask_client.scheduler.address,
+                    "status": "active"
+                })
             except Exception as e:
                 logger.error(f"Error getting Dask metrics: {e}")
-                return jsonify({"error": str(e)}), 500
+                return jsonify({"error": str(e), "enabled": False}), 500
 
     def _setup_websockets(self):
         """Setup WebSocket endpoints using Flask-Sock."""
