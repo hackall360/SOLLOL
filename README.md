@@ -1193,7 +1193,7 @@ embeddings = results.json()["results"]
 SOLLOL now includes **8 production-grade performance optimizations** that deliver significant throughput and latency improvements:
 
 ### 🚀 Response Caching Layer
-**Impact:** 90%+ latency reduction for repeated queries
+**Impact:** Reduces latency for repeated queries
 
 Intelligent LRU cache with TTL expiration:
 ```python
@@ -1207,10 +1207,10 @@ pool = OllamaPool.auto_configure(
 )
 
 # First request: normal latency
-response1 = pool.embed(model="mxbai-embed-large", input="Hello world")  # 500ms
+response1 = pool.embed(model="mxbai-embed-large", input="Hello world")
 
-# Cached request: near-instant
-response2 = pool.embed(model="mxbai-embed-large", input="Hello world")  # <1ms
+# Cached request: faster
+response2 = pool.embed(model="mxbai-embed-large", input="Hello world")  # Cache hit
 
 # Programmatic cache management
 pool.clear_cache()                              # Clear all
@@ -1320,9 +1320,7 @@ print(f"HTTP/2 enabled: {stats['http2_enabled']}")  # True
 **Estimated improvements:**
 - **Throughput:** +150-300% for concurrent workloads
 - **Latency:** -40-70% for typical requests
-- **Cache hits:** -90%+ latency reduction
-
-**Benchmark results:** See test results showing 14,685x speedup on cache hits!
+- **Cache hits:** Significant latency reduction for repeated queries
 
 ---
 
