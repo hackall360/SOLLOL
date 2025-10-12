@@ -10,11 +10,13 @@ Features:
 - Network traffic analysis
 - Error tracking and alerting
 - Activity stream for dashboard
+- Configurable sampling to reduce overhead
 """
 
 import json
 import logging
 import queue
+import random
 import threading
 import time
 from collections import deque
@@ -93,21 +95,35 @@ class NetworkObserver:
     Monitors all Ollama and llama.cpp backend actions in real-time.
     """
 
-    def __init__(self, max_events: int = 10000, redis_url: str = "redis://localhost:6379"):
+    def __init__(
+        self,
+        max_events: int = 10000,
+        redis_url: str = "redis://localhost:6379",
+        enable_sampling: bool = True,
+        sample_rate: float = 0.1
+    ):
         """
         Initialize network observer.
 
         Args:
             max_events: Maximum events to keep in memory
             redis_url: Redis connection URL for dashboard pub/sub
+            enable_sampling: Enable sampling to reduce overhead (default: True)
+            sample_rate: Fraction of info events to log (0.0-1.0, default: 0.1 = 10%)
         """
         self.max_events = max_events
         self.events: deque[NetworkEvent] = deque(maxlen=max_events)
         self.event_queue: queue.Queue = queue.Queue()
 
+        # Sampling configuration
+        self.enable_sampling = enable_sampling
+        self.sample_rate = max(0.0, min(1.0, sample_rate))  # Clamp to [0, 1]
+
         # Statistics tracking
         self.stats = {
             "total_events": 0,
+            "sampled_events": 0,  # Events that passed sampling
+            "dropped_events": 0,  # Events dropped by sampling
             "events_by_type": {},
             "events_by_backend": {},
             "errors_by_backend": {},
@@ -140,7 +156,8 @@ class NetworkObserver:
         )
         self._event_thread.start()
 
-        logger.info("🔍 Network Observer initialized (event-driven monitoring)")
+        sampling_status = f"sampling={self.sample_rate:.0%}" if self.enable_sampling else "sampling=disabled"
+        logger.info(f"🔍 Network Observer initialized (event-driven monitoring, {sampling_status})")
 
     def log_event(
         self,
@@ -189,13 +206,23 @@ class NetworkObserver:
         logger.debug("Network Observer event processing thread stopped")
 
     def _process_event(self, event: NetworkEvent):
-        """Process a single event."""
+        """Process a single event with sampling."""
         with self._lock:
+            # Update total event count (before sampling)
+            self.stats["total_events"] += 1
+
+            # Apply sampling for info-level events
+            if self.enable_sampling and event.severity == "info":
+                if random.random() > self.sample_rate:
+                    # Drop this event
+                    self.stats["dropped_events"] += 1
+                    return
+
+            # Event passed sampling (or sampling disabled)
+            self.stats["sampled_events"] += 1
+
             # Add to event history
             self.events.append(event)
-
-            # Update statistics
-            self.stats["total_events"] += 1
 
             event_type_key = event.event_type.value
             self.stats["events_by_type"][event_type_key] = \
@@ -375,10 +402,17 @@ class NetworkObserver:
     def get_stats(self) -> Dict[str, Any]:
         """Get overall observability statistics."""
         with self._lock:
+            total = self.stats["total_events"]
+            sampled = self.stats["sampled_events"]
+            dropped = self.stats["dropped_events"]
+
             return {
                 **self.stats,
                 "backends_tracked": len(self.backend_metrics),
                 "events_in_memory": len(self.events),
+                "sampling_enabled": self.enable_sampling,
+                "sample_rate": self.sample_rate,
+                "sampling_efficiency": (dropped / total) if total > 0 else 0.0,
             }
 
     def shutdown(self):

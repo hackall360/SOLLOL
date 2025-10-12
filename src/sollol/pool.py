@@ -18,7 +18,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
-import requests
+try:
+    import httpx
+    HTTPX_AVAILABLE = True
+except ImportError:
+    import requests
+    HTTPX_AVAILABLE = False
 
 from .intelligence import IntelligentRouter, get_router
 from .node_health import NodeHealthMonitor, normalize_model_name
@@ -60,6 +65,9 @@ class OllamaPool:
         enable_gpu_redis: bool = False,
         redis_host: str = "localhost",
         redis_port: int = 6379,
+        enable_cache: bool = True,
+        cache_max_size: int = 1000,
+        cache_ttl: int = 3600,
     ):
         """
         Initialize connection pool with full observability.
@@ -75,6 +83,9 @@ class OllamaPool:
             enable_gpu_redis: Subscribe to accurate GPU stats from Redis (requires gpu_reporter.py on nodes)
             redis_host: Redis server hostname (default: localhost)
             redis_port: Redis server port (default: 6379)
+            enable_cache: Enable response caching (default: True)
+            cache_max_size: Maximum number of cached responses (default: 1000)
+            cache_ttl: Cache TTL in seconds (default: 3600 = 1 hour)
         """
         self.nodes = nodes or []
         self.exclude_localhost = exclude_localhost
@@ -84,13 +95,88 @@ class OllamaPool:
         self._lock = threading.Lock()
         self._current_index = 0
 
-        # Persistent HTTP session for connection reuse
-        self.session = requests.Session()
-        self.session.headers.update({"Connection": "keep-alive"})
+        # Persistent HTTP session for connection reuse with HTTP/2 support
+        if HTTPX_AVAILABLE:
+            # Use httpx with HTTP/2 multiplexing for better performance
+            limits = httpx.Limits(
+                max_keepalive_connections=max(20, len(self.nodes or []) * 20),
+                max_connections=max(50, len(self.nodes or []) * 50),
+                keepalive_expiry=30.0
+            )
+
+            # Configure retry transport
+            transport = httpx.HTTPTransport(
+                retries=3,
+                limits=limits,
+                http2=True  # Enable HTTP/2
+            )
+
+            self.session = httpx.Client(
+                transport=transport,
+                timeout=httpx.Timeout(300.0, connect=10.0),
+                follow_redirects=True,
+                headers={"Connection": "keep-alive"}
+            )
+            logger.info("🚀 HTTP/2 multiplexing enabled via httpx")
+        else:
+            # Fallback to requests (HTTP/1.1 only)
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+
+            self.session = requests.Session()
+            self.session.headers.update({"Connection": "keep-alive"})
+
+            retry_strategy = Retry(
+                total=3,
+                backoff_factor=0.1,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["POST", "GET"]
+            )
+
+            adapter = HTTPAdapter(
+                pool_connections=max(10, len(self.nodes or []) * 10),
+                pool_maxsize=max(20, len(self.nodes or []) * 20),
+                max_retries=retry_strategy
+            )
+
+            self.session.mount("http://", adapter)
+            self.session.mount("https://", adapter)
+            logger.warning("⚠️  httpx not available, using requests (HTTP/1.1 only)")
+
+        # Initialize async session for async I/O support (httpx only)
+        self.async_session = None
+        if HTTPX_AVAILABLE:
+            limits = httpx.Limits(
+                max_keepalive_connections=max(20, len(self.nodes or []) * 20),
+                max_connections=max(50, len(self.nodes or []) * 50),
+                keepalive_expiry=30.0
+            )
+
+            transport = httpx.AsyncHTTPTransport(
+                retries=3,
+                limits=limits,
+                http2=True
+            )
+
+            self.async_session = httpx.AsyncClient(
+                transport=transport,
+                timeout=httpx.Timeout(300.0, connect=10.0),
+                follow_redirects=True,
+                headers={"Connection": "keep-alive"}
+            )
+            logger.info("⚡ Async I/O support enabled with httpx AsyncClient")
 
         # Auto-discover if no nodes provided
         if not self.nodes:
             self._auto_discover()
+
+        # Initialize response cache
+        from .response_cache import ResponseCache
+        self.cache = ResponseCache(
+            max_size=cache_max_size,
+            ttl=cache_ttl,
+            enabled=enable_cache
+        )
 
         # Initialize intelligent routing
         self.enable_intelligent_routing = enable_intelligent_routing
@@ -108,8 +194,9 @@ class OllamaPool:
         self._vram_refresh_enabled = True
 
         # Health check configuration
-        self._health_check_interval = 30  # seconds - check node health every 30s
+        self._health_check_base_interval = 30  # seconds - base interval for healthy nodes
         self._health_check_enabled = True
+        self._adaptive_health_checks = True  # Enable adaptive intervals based on node stability
 
         # Enhanced stats tracking with performance metrics
         self.stats = {
@@ -172,17 +259,18 @@ class OllamaPool:
         self._auto_register_with_dashboard()
 
     @classmethod
-    def auto_configure(cls, discover_all_nodes: bool = False) -> "OllamaPool":
+    def auto_configure(cls, discover_all_nodes: bool = False, **kwargs) -> "OllamaPool":
         """
         Create pool with automatic discovery.
 
         Args:
             discover_all_nodes: If True, scan full network for ALL nodes (default: False for speed)
+            **kwargs: Additional arguments passed to __init__ (e.g., enable_cache, cache_max_size, cache_ttl)
 
         Returns:
             OllamaPool instance ready to use
         """
-        return cls(nodes=None, discover_all_nodes=discover_all_nodes)
+        return cls(nodes=None, discover_all_nodes=discover_all_nodes, **kwargs)
 
     def _auto_discover(self):
         """Discover Ollama nodes automatically."""
@@ -403,6 +491,15 @@ class OllamaPool:
         Raises:
             RuntimeError: If all nodes fail
         """
+        # Check cache first (only for non-streaming, deterministic requests)
+        cache_key = None
+        if self.cache.enabled and not data.get("stream", False):
+            cache_key = self.cache.get_cache_key(endpoint, data)
+            cached_response = self.cache.get(cache_key)
+            if cached_response is not None:
+                logger.debug(f"Cache hit for {endpoint} (key={cache_key[:16]}...)")
+                return cached_response
+
         # Track request
         with self._lock:
             self.stats["total_requests"] += 1
@@ -511,7 +608,12 @@ class OllamaPool:
                             task_type=task_type, model=data["model"], actual_duration_ms=latency_ms
                         )
 
-                    return response.json()
+                    # Cache successful response
+                    response_data = response.json()
+                    if cache_key is not None:
+                        self.cache.set(cache_key, response_data)
+
+                    return response_data
                 else:
                     errors.append(f"{url}: HTTP {response.status_code}")
                     self._record_failure(node_key, latency_ms)
@@ -552,6 +654,156 @@ class OllamaPool:
             self.stats["failed_requests"] += 1
 
         raise RuntimeError(f"All Ollama nodes failed. Errors: {'; '.join(errors)}")
+
+    def _make_streaming_request(
+        self, endpoint: str, data: Dict[str, Any], priority: int = 5, timeout: float = 300.0, node: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Make streaming HTTP request that yields response chunks.
+
+        Args:
+            endpoint: API endpoint (e.g., '/api/chat')
+            data: Request payload
+            priority: Request priority (1-10)
+            timeout: Request timeout
+            node: Specific node to use (None = auto-select)
+
+        Yields:
+            Response chunks as they arrive
+
+        Raises:
+            RuntimeError: If streaming fails
+        """
+        # Ensure stream is enabled in request
+        data["stream"] = True
+
+        # Track request
+        with self._lock:
+            self.stats["total_requests"] += 1
+
+        # Select or use specified node
+        if node is None:
+            node, routing_decision = self._select_node(payload=data, priority=priority)
+        else:
+            routing_decision = None
+
+        node_key = f"{node['host']}:{node['port']}"
+        url = f"http://{node['host']}:{node['port']}{endpoint}"
+
+        # Track active request
+        with self._lock:
+            if node_key in self.stats["node_performance"]:
+                self.stats["node_performance"][node_key]["active_requests"] = (
+                    self.stats["node_performance"][node_key].get("active_requests", 0) + 1
+                )
+
+        # Track request start time
+        start_time = time.time()
+
+        # Log request to observer
+        model = data.get("model", "unknown")
+        operation = endpoint.split("/")[-1]
+        log_ollama_request(
+            backend=node_key,
+            model=model,
+            operation=operation,
+            priority=priority,
+            streaming=True
+        )
+
+        try:
+            logger.debug(f"Streaming request to {url}")
+
+            # Use streaming response
+            with self.session.post(url, json=data, timeout=timeout, stream=True) as response:
+                if response.status_code == 200:
+                    # Track success
+                    with self._lock:
+                        self.stats["successful_requests"] += 1
+                        self.stats["nodes_used"][node_key] = (
+                            self.stats["nodes_used"].get(node_key, 0) + 1
+                        )
+
+                    logger.info(f"🌊 Streaming from {node_key}...")
+
+                    # Yield chunks as they arrive
+                    for line in response.iter_lines():
+                        if line:
+                            try:
+                                chunk = json.loads(line)
+                                yield chunk
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Failed to decode streaming chunk: {e}")
+                                continue
+
+                    # Calculate total latency
+                    latency_ms = (time.time() - start_time) * 1000
+
+                    # Update metrics
+                    with self._lock:
+                        perf = self.stats["node_performance"][node_key]
+                        perf["total_requests"] += 1
+
+                        # Update running average latency
+                        if perf["total_requests"] == 1:
+                            perf["latency_ms"] = latency_ms
+                        else:
+                            perf["latency_ms"] = (
+                                perf["latency_ms"] * (perf["total_requests"] - 1) + latency_ms
+                            ) / perf["total_requests"]
+
+                        # Update success rate
+                        perf["success_rate"] = (
+                            perf["total_requests"] - perf["failed_requests"]
+                        ) / perf["total_requests"]
+
+                    # Log completion
+                    log_ollama_response(
+                        backend=node_key,
+                        model=model,
+                        latency_ms=latency_ms,
+                        status_code=response.status_code,
+                        streaming=True
+                    )
+
+                    logger.info(f"✅ Stream complete from {node_key} ({latency_ms:.1f}ms)")
+
+                else:
+                    latency_ms = (time.time() - start_time) * 1000
+                    self._record_failure(node_key, latency_ms)
+
+                    # Log error
+                    log_ollama_error(
+                        backend=node_key,
+                        model=model,
+                        error=f"HTTP {response.status_code}",
+                        latency_ms=latency_ms
+                    )
+
+                    raise RuntimeError(f"Streaming failed: HTTP {response.status_code}")
+
+        except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+            self._record_failure(node_key, latency_ms)
+
+            # Log error
+            log_ollama_error(
+                backend=node_key,
+                model=model,
+                error=str(e),
+                latency_ms=latency_ms
+            )
+
+            raise RuntimeError(f"Streaming request failed: {e}")
+
+        finally:
+            # Decrement active request counter
+            with self._lock:
+                if node_key in self.stats["node_performance"]:
+                    self.stats["node_performance"][node_key]["active_requests"] = max(
+                        0,
+                        self.stats["node_performance"][node_key].get("active_requests", 1) - 1
+                    )
 
     def _query_node_vram(self, node: Dict[str, str]) -> int:
         """
@@ -843,90 +1095,138 @@ class OllamaPool:
 
         logger.debug("VRAM monitoring thread stopped")
 
+    def _get_adaptive_health_interval(self, node_key: str) -> int:
+        """
+        Calculate adaptive health check interval based on node stability.
+
+        Args:
+            node_key: Node identifier
+
+        Returns:
+            Health check interval in seconds
+        """
+        if not self._adaptive_health_checks:
+            return self._health_check_base_interval
+
+        perf_data = self.stats["node_performance"].get(node_key, {})
+        total_requests = perf_data.get("total_requests", 0)
+        failed_requests = perf_data.get("failed_requests", 0)
+
+        if total_requests == 0:
+            return self._health_check_base_interval
+
+        failure_rate = failed_requests / total_requests
+
+        # Adaptive intervals based on stability
+        if failure_rate < 0.01:  # Very stable (<1% failures)
+            return 60  # Check every 60s
+        elif failure_rate < 0.05:  # Stable (<5% failures)
+            return self._health_check_base_interval  # Check every 30s
+        elif failure_rate < 0.15:  # Degraded (5-15% failures)
+            return 15  # Check every 15s
+        else:  # Unstable (>15% failures)
+            return 5  # Check every 5s
+
     def _health_check_loop(self):
         """Background thread to periodically check node health for live dashboard updates."""
         logger.debug("Health check monitoring thread started")
 
+        # Track last check time per node for adaptive intervals
+        last_check_times = {}
+
         while self._health_check_enabled:
             try:
-                time.sleep(self._health_check_interval)
+                time.sleep(5)  # Base loop interval
 
-                # Check health of all nodes
+                # Check health of all nodes with adaptive intervals
+                current_time = time.time()
                 with self._lock:
                     for node in self.nodes:
                         node_key = f"{node['host']}:{node['port']}"
 
-                        if node_key in self.stats["node_performance"]:
-                            # Get current performance data
-                            perf_data = self.stats["node_performance"][node_key]
+                        if node_key not in self.stats["node_performance"]:
+                            continue
 
-                            # Ping node with lightweight /api/tags request
-                            start_time = time.time()
-                            try:
-                                url = f"http://{node['host']}:{node['port']}/api/tags"
-                                response = requests.get(url, timeout=2)
-                                latency_ms = (time.time() - start_time) * 1000
+                        # Get adaptive interval for this node
+                        interval = self._get_adaptive_health_interval(node_key)
+                        last_check = last_check_times.get(node_key, 0)
 
-                                if response.ok:
-                                    # Check for status change
-                                    old_status = "offline" if not perf_data.get("available", True) else "healthy"
-                                    new_status = "healthy"
+                        # Skip if not enough time has passed
+                        if current_time - last_check < interval:
+                            continue
 
-                                    # Update health status
-                                    self.stats["node_performance"][node_key]["available"] = True
-                                    self.stats["node_performance"][node_key]["latency_ms"] = latency_ms
+                        last_check_times[node_key] = current_time
 
-                                    # Update health monitor baseline
-                                    self.health_monitor.update_baseline(
-                                        node_key, latency_ms, is_gpu=True
-                                    )
+                        # Get current performance data
+                        perf_data = self.stats["node_performance"][node_key]
 
-                                    # Log health check to observer
-                                    log_node_health_check(
+                        # Ping node with lightweight /api/tags request
+                        start_time = time.time()
+                        try:
+                            url = f"http://{node['host']}:{node['port']}/api/tags"
+                            response = self.session.get(url, timeout=2)
+                            latency_ms = (time.time() - start_time) * 1000
+
+                            if response.ok:
+                                # Check for status change
+                                old_status = "offline" if not perf_data.get("available", True) else "healthy"
+                                new_status = "healthy"
+
+                                # Update health status
+                                self.stats["node_performance"][node_key]["available"] = True
+                                self.stats["node_performance"][node_key]["latency_ms"] = latency_ms
+
+                                # Update health monitor baseline
+                                self.health_monitor.update_baseline(
+                                    node_key, latency_ms, is_gpu=True
+                                )
+
+                                # Log health check to observer
+                                log_node_health_check(
+                                    backend=node_key,
+                                    status=new_status,
+                                    latency_ms=latency_ms
+                                )
+
+                                # Log to InfluxDB time-series metrics
+                                log_node_health(
+                                    node_url=f"http://{node['host']}:{node['port']}",
+                                    healthy=True,
+                                    latency_ms=latency_ms,
+                                    models_loaded=len(node.get('models', [])),
+                                    vram_free_mb=perf_data.get('gpu_free_mem', 0),
+                                    vram_total_mb=perf_data.get('gpu_total_mem', 0),
+                                    failure_count=0
+                                )
+
+                                # Log status change if needed
+                                if old_status != new_status:
+                                    log_node_status_change(
                                         backend=node_key,
-                                        status=new_status,
-                                        latency_ms=latency_ms
+                                        old_status=old_status,
+                                        new_status=new_status
                                     )
 
-                                    # Log to InfluxDB time-series metrics
-                                    log_node_health(
-                                        node_url=f"http://{node['host']}:{node['port']}",
-                                        healthy=True,
-                                        latency_ms=latency_ms,
-                                        models_loaded=len(node.get('models', [])),
-                                        vram_free_mb=perf_data.get('gpu_free_mem', 0),
-                                        vram_total_mb=perf_data.get('gpu_total_mem', 0),
-                                        failure_count=0
-                                    )
+                                logger.debug(
+                                    f"✓ Health check {node_key}: {latency_ms:.0f}ms (interval={interval}s)"
+                                )
+                            else:
+                                # Check for status change
+                                old_status = "healthy" if perf_data.get("available", True) else "offline"
+                                new_status = "offline"
 
-                                    # Log status change if needed
-                                    if old_status != new_status:
-                                        log_node_status_change(
-                                            backend=node_key,
-                                            old_status=old_status,
-                                            new_status=new_status
-                                        )
+                                # Node returned error
+                                self.stats["node_performance"][node_key]["available"] = False
 
-                                    logger.debug(
-                                        f"✓ Health check {node_key}: {latency_ms:.0f}ms"
-                                    )
-                                else:
-                                    # Check for status change
-                                    old_status = "healthy" if perf_data.get("available", True) else "offline"
-                                    new_status = "offline"
+                                # Log health check failure to observer
+                                log_node_health_check(
+                                    backend=node_key,
+                                    status=new_status,
+                                    latency_ms=latency_ms,
+                                    error=f"HTTP {response.status_code}"
+                                )
 
-                                    # Node returned error
-                                    self.stats["node_performance"][node_key]["available"] = False
-
-                                    # Log health check failure to observer
-                                    log_node_health_check(
-                                        backend=node_key,
-                                        status=new_status,
-                                        latency_ms=latency_ms,
-                                        error=f"HTTP {response.status_code}"
-                                    )
-
-                                    # Log to InfluxDB time-series metrics
+                                # Log to InfluxDB time-series metrics
                                     log_node_health(
                                         node_url=f"http://{node['host']}:{node['port']}",
                                         healthy=False,
@@ -986,49 +1286,59 @@ class OllamaPool:
         stream: bool = False,
         priority: int = 5,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ):
         """
         Chat completion with intelligent routing and observability.
 
         Args:
             model: Model name (e.g., "llama3.2")
             messages: Chat messages
-            stream: Stream response (not supported yet)
+            stream: Stream response token-by-token (default: False)
             priority: Request priority 1-10 (default: 5)
             **kwargs: Additional Ollama parameters
 
         Returns:
-            Chat response dict
+            If stream=False: Chat response dict
+            If stream=True: Generator yielding response chunks
+
+        Example (streaming):
+            for chunk in pool.chat("llama2", messages, stream=True):
+                print(chunk.get("message", {}).get("content", ""), end="")
         """
+        data = {"model": model, "messages": messages, "stream": stream, **kwargs}
+
         if stream:
-            raise NotImplementedError("Streaming not supported yet")
-
-        data = {"model": model, "messages": messages, "stream": False, **kwargs}
-
-        return self._make_request("/api/chat", data, priority=priority)
+            return self._make_streaming_request("/api/chat", data, priority=priority)
+        else:
+            return self._make_request("/api/chat", data, priority=priority)
 
     def generate(
         self, model: str, prompt: str, stream: bool = False, priority: int = 5, **kwargs
-    ) -> Dict[str, Any]:
+    ):
         """
         Generate text with intelligent routing and observability.
 
         Args:
             model: Model name
             prompt: Text prompt
-            stream: Stream response (not supported yet)
+            stream: Stream response token-by-token (default: False)
             priority: Request priority 1-10 (default: 5)
             **kwargs: Additional Ollama parameters
 
         Returns:
-            Generation response dict
+            If stream=False: Generation response dict
+            If stream=True: Generator yielding response chunks
+
+        Example (streaming):
+            for chunk in pool.generate("llama2", "Tell me a story", stream=True):
+                print(chunk.get("response", ""), end="")
         """
+        data = {"model": model, "prompt": prompt, "stream": stream, **kwargs}
+
         if stream:
-            raise NotImplementedError("Streaming not supported yet")
-
-        data = {"model": model, "prompt": prompt, "stream": False, **kwargs}
-
-        return self._make_request("/api/generate", data, priority=priority)
+            return self._make_streaming_request("/api/generate", data, priority=priority)
+        else:
+            return self._make_request("/api/generate", data, priority=priority)
 
     def embed(self, model: str, input: str, priority: int = 5, **kwargs) -> Dict[str, Any]:
         """
@@ -1146,6 +1456,325 @@ class OllamaPool:
 
         return results
 
+    # Async I/O methods (requires httpx)
+
+    async def chat_async(
+        self,
+        model: str,
+        messages: List[Dict[str, str]],
+        priority: int = 5,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Async chat completion with non-blocking I/O.
+
+        Args:
+            model: Model name
+            messages: Chat messages
+            priority: Request priority 1-10
+            **kwargs: Additional Ollama parameters
+
+        Returns:
+            Chat response dict
+
+        Example:
+            response = await pool.chat_async("llama2", messages)
+        """
+        if not self.async_session:
+            raise RuntimeError("Async I/O requires httpx - install with: pip install httpx")
+
+        data = {"model": model, "messages": messages, "stream": False, **kwargs}
+        return await self._make_request_async("/api/chat", data, priority=priority)
+
+    async def generate_async(
+        self,
+        model: str,
+        prompt: str,
+        priority: int = 5,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Async text generation with non-blocking I/O.
+
+        Args:
+            model: Model name
+            prompt: Text prompt
+            priority: Request priority 1-10
+            **kwargs: Additional Ollama parameters
+
+        Returns:
+            Generation response dict
+
+        Example:
+            response = await pool.generate_async("llama2", "Tell me a story")
+        """
+        if not self.async_session:
+            raise RuntimeError("Async I/O requires httpx - install with: pip install httpx")
+
+        data = {"model": model, "prompt": prompt, "stream": False, **kwargs}
+        return await self._make_request_async("/api/generate", data, priority=priority)
+
+    async def embed_async(
+        self,
+        model: str,
+        input: str,
+        priority: int = 5,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Async embedding generation with non-blocking I/O.
+
+        Args:
+            model: Embedding model name
+            input: Text to embed
+            priority: Request priority 1-10
+            **kwargs: Additional Ollama parameters
+
+        Returns:
+            Embedding response dict
+
+        Example:
+            response = await pool.embed_async("mxbai-embed-large", "Hello world")
+        """
+        if not self.async_session:
+            raise RuntimeError("Async I/O requires httpx - install with: pip install httpx")
+
+        data = {"model": model, "input": input, **kwargs}
+        return await self._make_request_async("/api/embed", data, priority=priority)
+
+    async def _make_request_async(
+        self,
+        endpoint: str,
+        data: Dict[str, Any],
+        priority: int = 5,
+        timeout: float = 300.0
+    ) -> Dict[str, Any]:
+        """
+        Make async HTTP request with intelligent routing (simplified version).
+
+        Args:
+            endpoint: API endpoint
+            data: Request payload
+            priority: Request priority
+            timeout: Request timeout
+
+        Returns:
+            Response data
+        """
+        # Check cache first
+        cache_key = None
+        if self.cache.enabled and not data.get("stream", False):
+            cache_key = self.cache.get_cache_key(endpoint, data)
+            cached_response = self.cache.get(cache_key)
+            if cached_response is not None:
+                logger.debug(f"Cache hit for {endpoint} (async)")
+                return cached_response
+
+        # Track request
+        with self._lock:
+            self.stats["total_requests"] += 1
+
+        # Select node
+        node, routing_decision = self._select_node(payload=data, priority=priority)
+        node_key = f"{node['host']}:{node['port']}"
+        url = f"http://{node['host']}:{node['port']}{endpoint}"
+
+        # Track active request
+        with self._lock:
+            if node_key in self.stats["node_performance"]:
+                self.stats["node_performance"][node_key]["active_requests"] = (
+                    self.stats["node_performance"][node_key].get("active_requests", 0) + 1
+                )
+
+        start_time = time.time()
+
+        # Log request
+        model = data.get("model", "unknown")
+        operation = endpoint.split("/")[-1]
+        log_ollama_request(
+            backend=node_key,
+            model=model,
+            operation=operation,
+            priority=priority,
+            async_io=True
+        )
+
+        try:
+            # Make async request
+            response = await self.async_session.post(url, json=data, timeout=timeout)
+            latency_ms = (time.time() - start_time) * 1000
+
+            if response.status_code == 200:
+                # Success - update metrics
+                with self._lock:
+                    self.stats["successful_requests"] += 1
+                    self.stats["nodes_used"][node_key] = (
+                        self.stats["nodes_used"].get(node_key, 0) + 1
+                    )
+
+                    perf = self.stats["node_performance"][node_key]
+                    perf["total_requests"] += 1
+
+                    if perf["total_requests"] == 1:
+                        perf["latency_ms"] = latency_ms
+                    else:
+                        perf["latency_ms"] = (
+                            perf["latency_ms"] * (perf["total_requests"] - 1) + latency_ms
+                        ) / perf["total_requests"]
+
+                    perf["success_rate"] = (
+                        perf["total_requests"] - perf["failed_requests"]
+                    ) / perf["total_requests"]
+
+                logger.info(f"✅ Async request succeeded: {node_key} ({latency_ms:.1f}ms)")
+
+                # Log response
+                log_ollama_response(
+                    backend=node_key,
+                    model=model,
+                    latency_ms=latency_ms,
+                    status_code=response.status_code,
+                    async_io=True
+                )
+
+                # Cache and return
+                response_data = response.json()
+                if cache_key is not None:
+                    self.cache.set(cache_key, response_data)
+
+                return response_data
+            else:
+                self._record_failure(node_key, latency_ms)
+                log_ollama_error(
+                    backend=node_key,
+                    model=model,
+                    error=f"HTTP {response.status_code}",
+                    latency_ms=latency_ms
+                )
+                raise RuntimeError(f"Request failed: HTTP {response.status_code}")
+
+        except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+            self._record_failure(node_key, latency_ms)
+            log_ollama_error(
+                backend=node_key,
+                model=model,
+                error=str(e),
+                latency_ms=latency_ms
+            )
+            raise RuntimeError(f"Async request failed: {e}")
+
+        finally:
+            # Decrement active request counter
+            with self._lock:
+                if node_key in self.stats["node_performance"]:
+                    self.stats["node_performance"][node_key]["active_requests"] = max(
+                        0,
+                        self.stats["node_performance"][node_key].get("active_requests", 1) - 1
+                    )
+
+    def warm_model(self, model: str, node: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Warm up a model by pre-loading it on a node.
+
+        This sends a minimal inference request to load the model into VRAM,
+        reducing first-request latency by 1-5 seconds.
+
+        Args:
+            model: Model name to warm up
+            node: Specific node to warm (None = all nodes)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            target_nodes = [node] if node else self.nodes
+
+            for n in target_nodes:
+                node_key = f"{n['host']}:{n['port']}"
+                logger.info(f"🔥 Warming model '{model}' on {node_key}...")
+
+                # Send minimal generation request to load model
+                try:
+                    result = self._make_request(
+                        "/api/generate",
+                        {
+                            "model": model,
+                            "prompt": "",  # Empty prompt
+                            "max_tokens": 1,  # Minimal tokens
+                            "stream": False,
+                        },
+                        node=n,
+                        timeout=30,  # Allow time for model loading
+                    )
+
+                    if result:
+                        logger.info(f"✅ Model '{model}' warmed on {node_key}")
+                    else:
+                        logger.warning(f"⚠️  Failed to warm model '{model}' on {node_key}")
+                        return False
+
+                except Exception as e:
+                    logger.warning(f"⚠️  Error warming model '{model}' on {node_key}: {e}")
+                    return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Error in warm_model: {e}")
+            return False
+
+    def warm_models(self, models: List[str], parallel: bool = True) -> Dict[str, bool]:
+        """
+        Warm up multiple models across all nodes.
+
+        This pre-loads models to reduce cold-start latency on first use.
+
+        Args:
+            models: List of model names to warm
+            parallel: Warm models in parallel (default: True)
+
+        Returns:
+            Dict mapping model names to success status
+
+        Example:
+            pool.warm_models(["llama2", "codellama", "mistral"])
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        results = {}
+
+        if not models:
+            return results
+
+        logger.info(f"🔥 Warming {len(models)} models across {len(self.nodes)} nodes...")
+
+        if parallel:
+            # Warm models in parallel
+            with ThreadPoolExecutor(max_workers=min(len(models), 5)) as executor:
+                futures = {
+                    executor.submit(self.warm_model, model): model
+                    for model in models
+                }
+
+                for future in as_completed(futures):
+                    model = futures[future]
+                    try:
+                        success = future.result()
+                        results[model] = success
+                    except Exception as e:
+                        logger.error(f"Error warming model {model}: {e}")
+                        results[model] = False
+        else:
+            # Warm models sequentially
+            for model in models:
+                results[model] = self.warm_model(model)
+
+        success_count = sum(1 for v in results.values() if v)
+        logger.info(f"✅ Model warming complete: {success_count}/{len(models)} successful")
+
+        return results
+
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive pool statistics with performance metrics."""
         with self._lock:
@@ -1157,6 +1786,9 @@ class OllamaPool:
                 "nodes_configured": len(self.nodes),
                 "nodes": [f"{n['host']}:{n['port']}" for n in self.nodes],
                 "intelligent_routing_enabled": self.enable_intelligent_routing,
+                "http2_enabled": HTTPX_AVAILABLE,
+                "async_io_enabled": self.async_session is not None,
+                "cache": self.cache.get_stats(),
                 "vram_monitoring": {
                     "enabled": True,
                     "gpu_type": self.vram_monitor.gpu_type,
@@ -1195,6 +1827,48 @@ class OllamaPool:
                 self.nodes.remove(node)
                 logger.info(f"Removed node: {host}:{port}")
 
+    # Cache management methods
+    def clear_cache(self) -> None:
+        """Clear all cached responses."""
+        self.cache.clear()
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        return self.cache.get_stats()
+
+    def invalidate_cache_by_model(self, model: str) -> int:
+        """
+        Invalidate all cached responses for a specific model.
+
+        Args:
+            model: Model name
+
+        Returns:
+            Number of entries invalidated
+        """
+        return self.cache.invalidate_by_model(model)
+
+    def export_cache(self) -> Dict[str, Any]:
+        """
+        Export cache for persistence.
+
+        Returns:
+            Cache data dictionary
+        """
+        return self.cache.export_cache()
+
+    def import_cache(self, data: Dict[str, Any]) -> int:
+        """
+        Import cache from exported data.
+
+        Args:
+            data: Cache data from export_cache()
+
+        Returns:
+            Number of entries imported
+        """
+        return self.cache.import_cache(data)
+
     def stop(self):
         """
         Stop the pool and cleanup background threads.
@@ -1230,7 +1904,7 @@ class OllamaPool:
             except Exception as e:
                 logger.warning(f"Error stopping GPU subscriber: {e}")
 
-        # Close persistent HTTP session
+        # Close persistent HTTP sessions
         if hasattr(self, 'session'):
             try:
                 self.session.close()
@@ -1238,116 +1912,29 @@ class OllamaPool:
             except Exception as e:
                 logger.warning(f"Error closing HTTP session: {e}")
 
+        if hasattr(self, 'async_session') and self.async_session:
+            try:
+                # Close async session (httpx AsyncClient)
+                import asyncio
+                loop = None
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                if loop.is_running():
+                    # Schedule close task
+                    asyncio.create_task(self.async_session.aclose())
+                else:
+                    # Run close in event loop
+                    loop.run_until_complete(self.async_session.aclose())
+
+                logger.info("Async HTTP session closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing async HTTP session: {e}")
+
         logger.info("OllamaPool stopped")
-
-    # Async methods for concurrent request handling
-    async def chat_async(
-        self,
-        model: str,
-        messages: List[Dict[str, str]],
-        stream: bool = False,
-        priority: int = 5,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        """
-        Async chat completion with intelligent routing (enables parallel requests).
-
-        Args:
-            model: Model name (e.g., "llama3.2")
-            messages: Chat messages
-            stream: Stream response (not supported yet)
-            priority: Request priority 1-10 (default: 5)
-            **kwargs: Additional Ollama parameters
-
-        Returns:
-            Chat response dict
-
-        Example:
-            ```python
-            import asyncio
-            pool = OllamaPool.auto_configure()
-
-            # Run multiple requests in parallel
-            tasks = [
-                pool.chat_async("llama3.2", [{"role": "user", "content": "Hello"}]),
-                pool.chat_async("llama3.2", [{"role": "user", "content": "Hi"}]),
-                pool.chat_async("llama3.2", [{"role": "user", "content": "Hey"}]),
-            ]
-            responses = await asyncio.gather(*tasks)
-            ```
-        """
-        if stream:
-            raise NotImplementedError("Streaming not supported yet")
-
-        data = {"model": model, "messages": messages, "stream": False, **kwargs}
-
-        # Run synchronous _make_request in thread pool to avoid blocking event loop
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,  # Use default executor
-            lambda: self._make_request("/api/chat", data, priority=priority)
-        )
-
-    async def generate_async(
-        self, model: str, prompt: str, stream: bool = False, priority: int = 5, **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Async generation with intelligent routing (enables parallel requests).
-
-        Args:
-            model: Model name
-            prompt: Text prompt
-            stream: Stream response (not supported yet)
-            priority: Request priority 1-10 (default: 5)
-            **kwargs: Additional Ollama parameters
-
-        Returns:
-            Generation response dict
-
-        Example:
-            ```python
-            import asyncio
-            pool = OllamaPool.auto_configure()
-
-            # Run multiple generations in parallel across heterogeneous GPUs
-            prompts = ["Tell me a joke", "Explain AI", "Write a poem"]
-            tasks = [pool.generate_async("llama3.2", p) for p in prompts]
-            responses = await asyncio.gather(*tasks)
-            ```
-        """
-        if stream:
-            raise NotImplementedError("Streaming not supported yet")
-
-        data = {"model": model, "prompt": prompt, "stream": False, **kwargs}
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self._make_request("/api/generate", data, priority=priority)
-        )
-
-    async def embed_async(
-        self, model: str, input: str, priority: int = 5, **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Async embedding generation with intelligent routing.
-
-        Args:
-            model: Embedding model name
-            input: Text to embed
-            priority: Request priority 1-10 (default: 5)
-            **kwargs: Additional Ollama parameters
-
-        Returns:
-            Embedding response dict
-        """
-        data = {"model": model, "input": input, **kwargs}
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self._make_request("/api/embed", data, priority=priority)
-        )
 
     def __del__(self):
         """Cleanup when object is destroyed."""
