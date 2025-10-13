@@ -26,6 +26,12 @@ except ImportError:
     import requests
     HTTPX_AVAILABLE = False
 
+try:
+    from distributed import Client as DaskClient
+    DASK_AVAILABLE = True
+except ImportError:
+    DASK_AVAILABLE = False
+
 from .intelligence import IntelligentRouter, get_router
 from .node_health import NodeHealthMonitor, normalize_model_name
 from .vram_monitor import VRAMMonitor
@@ -40,6 +46,40 @@ from .network_observer import (
 from .routing_logger import get_routing_logger
 
 logger = logging.getLogger(__name__)
+
+
+# Worker-local pool cache (reused across Dask tasks on same worker)
+_worker_pool_cache = {}
+
+# Module-level helper for Dask (must be picklable)
+def _dask_embed_task(pool_nodes, model, text_data, priority, **kwargs):
+    """
+    Standalone embedding task for Dask distributed processing.
+
+    This function must be at module level to be picklable by Dask.
+    Creates a worker-local pool that's reused across tasks.
+    """
+    idx, text = text_data
+    try:
+        # Get or create worker-local pool (cached per worker process)
+        import os
+        worker_id = os.getpid()
+
+        if worker_id not in _worker_pool_cache:
+            # Create a lightweight pool instance for this worker
+            from .pool import OllamaPool
+            _worker_pool_cache[worker_id] = OllamaPool(
+                nodes=pool_nodes,
+                enable_cache=False,
+                enable_dask=False,
+                register_with_dashboard=False
+            )
+
+        pool = _worker_pool_cache[worker_id]
+        result = pool.embed(model, text, priority=priority, **kwargs)
+        return idx, result, None
+    except Exception as e:
+        return idx, None, str(e)
 
 
 class OllamaPool:
@@ -63,6 +103,8 @@ class OllamaPool:
         app_name: Optional[str] = None,
         register_with_dashboard: bool = True,
         enable_ray: bool = False,
+        enable_dask: bool = True,
+        dask_address: Optional[str] = None,
         enable_gpu_redis: bool = False,
         redis_host: str = "localhost",
         redis_port: int = 6379,
@@ -81,6 +123,8 @@ class OllamaPool:
             app_name: Custom application name for dashboard registration (e.g., "FlockParser")
             register_with_dashboard: Whether to auto-register with dashboard (default: True)
             enable_ray: Initialize Ray cluster for multi-app coordination (default: False)
+            enable_dask: Use Dask for distributed batch processing (default: True)
+            dask_address: Dask scheduler address (None = auto-connect or start local)
             enable_gpu_redis: Subscribe to accurate GPU stats from Redis (requires gpu_reporter.py on nodes)
             redis_host: Redis server hostname (default: localhost)
             redis_port: Redis server port (default: 6379)
@@ -218,6 +262,11 @@ class OllamaPool:
         if enable_ray:
             self._init_ray_cluster()
 
+        # Initialize Dask client for distributed batch processing
+        self.dask_client = None
+        if enable_dask:
+            self._init_dask_client(dask_address)
+
         # Start background VRAM monitoring thread
         self._vram_refresh_thread = threading.Thread(
             target=self._refresh_vram_loop,
@@ -253,7 +302,8 @@ class OllamaPool:
             f"OllamaPool initialized with {len(self.nodes)} nodes "
             f"(intelligent_routing={'enabled' if enable_intelligent_routing else 'disabled'}, "
             f"vram_monitoring=enabled, health_checks=enabled, gpu_type={self.vram_monitor.gpu_type}, "
-            f"gpu_redis={'enabled' if enable_gpu_redis else 'disabled'})"
+            f"gpu_redis={'enabled' if enable_gpu_redis else 'disabled'}, "
+            f"dask={'enabled' if self.dask_client else 'disabled'})"
         )
 
         # Auto-register with SOLLOL dashboard if available
@@ -408,6 +458,49 @@ class OllamaPool:
         except Exception as e:
             logger.warning(f"⚠️  Failed to initialize Ray cluster: {e}")
             logger.info("   Continuing without Ray (not required for OllamaPool)")
+
+    def _init_dask_client(self, dask_address: Optional[str] = None):
+        """Initialize Dask client for distributed batch processing."""
+        if not DASK_AVAILABLE:
+            logger.info("⚠️  Dask not available - install with: pip install dask distributed")
+            logger.info("   Falling back to ThreadPoolExecutor for batch processing")
+            return
+
+        try:
+            # Try to connect to existing Dask scheduler first
+            if dask_address:
+                logger.info(f"🔍 Connecting to Dask scheduler at {dask_address}...")
+                self.dask_client = DaskClient(dask_address)
+                logger.info(f"✅ Connected to Dask scheduler at {dask_address}")
+                logger.info(f"   Dask workers: {len(self.dask_client.scheduler_info()['workers'])}")
+            else:
+                # Try to connect to running scheduler
+                try:
+                    logger.info("🔍 Looking for existing Dask scheduler...")
+                    self.dask_client = DaskClient(timeout='2s')
+                    logger.info(f"✅ Connected to existing Dask scheduler")
+                    logger.info(f"   Dask workers: {len(self.dask_client.scheduler_info()['workers'])}")
+                except (OSError, Exception):
+                    # No existing scheduler, start local cluster
+                    logger.info("🚀 Starting local Dask cluster for distributed batch processing")
+                    from distributed import LocalCluster
+
+                    # Start with conservative settings
+                    cluster = LocalCluster(
+                        n_workers=len(self.nodes) if self.nodes else 2,
+                        threads_per_worker=2,
+                        processes=True,
+                        memory_limit='auto',
+                        silence_logs=logging.WARNING
+                    )
+                    self.dask_client = DaskClient(cluster)
+                    logger.info(f"✅ Dask cluster started with {len(self.nodes) if self.nodes else 2} workers")
+                    logger.info(f"   Dashboard: {self.dask_client.dashboard_link}")
+
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to initialize Dask: {e}")
+            logger.info("   Falling back to ThreadPoolExecutor for batch processing")
+            self.dask_client = None
 
     def _select_node(
         self, payload: Optional[Dict[str, Any]] = None, priority: int = 5
@@ -1481,7 +1574,14 @@ class OllamaPool:
                 max_workers = min(len(self.nodes) * 2, batch_size)
                 max_workers = max(1, max_workers)  # At least 1 worker
 
-        logger.info(f"🚀 Batch embedding {batch_size} texts with {max_workers} workers across {len(self.nodes)} nodes")
+        # Adaptive routing: Use Dask for large batches (>100), ThreadPoolExecutor for small
+        # This is based on benchmarks showing Dask overhead dominates on small batches
+        use_dask = self.dask_client and batch_size > 100
+
+        if use_dask:
+            logger.info(f"🚀 Batch embedding {batch_size} texts with Dask (distributed) across cluster")
+        else:
+            logger.info(f"🚀 Batch embedding {batch_size} texts with {max_workers} workers (local threads) across {len(self.nodes)} nodes")
 
         results = [None] * batch_size
         completed = 0
@@ -1494,7 +1594,48 @@ class OllamaPool:
             except Exception as e:
                 return index, None, e
 
-        # Process in parallel
+        # Use Dask for distributed processing if available
+        if use_dask:
+            logger.info(f"⚡ Using Dask distributed processing across cluster")
+
+            # Prepare task data
+            tasks = [(i, text) for i, text in enumerate(inputs)]
+
+            # Use functools.partial to bind parameters for the module-level function
+            from functools import partial
+            task_func = partial(_dask_embed_task, self.nodes, model, priority=priority, **kwargs)
+
+            # Use client.map for better performance
+            futures = self.dask_client.map(task_func, tasks)
+
+            # Collect results as they complete
+            from distributed import as_completed as dask_as_completed
+
+            for future in dask_as_completed(futures):
+                try:
+                    index, result, error = future.result()
+                    completed += 1
+
+                    # Show progress every 50 embeddings or on completion
+                    if completed % 50 == 0 or completed == batch_size:
+                        progress_pct = (completed * 100) // batch_size
+                        logger.info(f"   Progress: {completed}/{batch_size} embeddings ({progress_pct}%)")
+
+                    if error:
+                        logger.error(f"⚠️  Error embedding text {index}: {error}")
+                    else:
+                        results[index] = result
+                except Exception as e:
+                    logger.error(f"⚠️  Dask task error: {e}")
+                    completed += 1
+
+            # Count successful embeddings
+            success_count = sum(1 for r in results if r is not None)
+            logger.info(f"✅ Dask batch complete: {success_count}/{batch_size} embeddings successful")
+
+            return results
+
+        # Fallback to ThreadPoolExecutor if Dask unavailable
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
             futures = {
@@ -1848,6 +1989,21 @@ class OllamaPool:
             # Get real-time VRAM data
             local_vram = self.vram_monitor.get_local_vram_info()
 
+            # Get Dask cluster info if available
+            dask_info = {}
+            if self.dask_client:
+                try:
+                    scheduler_info = self.dask_client.scheduler_info()
+                    dask_info = {
+                        "enabled": True,
+                        "workers": len(scheduler_info.get('workers', {})),
+                        "dashboard": self.dask_client.dashboard_link,
+                    }
+                except Exception:
+                    dask_info = {"enabled": True, "status": "unknown"}
+            else:
+                dask_info = {"enabled": False}
+
             stats_data = {
                 **self.stats,
                 "nodes_configured": len(self.nodes),
@@ -1855,6 +2011,7 @@ class OllamaPool:
                 "intelligent_routing_enabled": self.enable_intelligent_routing,
                 "http2_enabled": HTTPX_AVAILABLE,
                 "async_io_enabled": self.async_session is not None,
+                "dask": dask_info,
                 "cache": self.cache.get_stats(),
                 "vram_monitoring": {
                     "enabled": True,
