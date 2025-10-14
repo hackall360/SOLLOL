@@ -510,9 +510,9 @@ class HybridRouter:
 
         # Convert messages to prompt if needed
         if isinstance(messages, list) and len(messages) > 0:
-            # Use pool's chat method
+            # Use pool's async chat method to avoid blocking the event loop
             priority = kwargs.pop("priority", 5)
-            result = self.ollama_pool.chat(
+            result = await self.ollama_pool.chat_async(
                 model=model, messages=messages, priority=priority, **kwargs
             )
             return result

@@ -2092,23 +2092,28 @@ class OllamaPool:
                 logger.info(f"🔥 Warming model '{model}' on {node_key}...")
 
                 # Send minimal generation request to load model
+                # Use direct HTTP POST with extended timeout (600s = 10min) for large model loading
+                # Bypasses pool's routing logic to avoid overhead
+                # Long timeout is critical for CPU-only generation and resource-constrained systems
                 try:
-                    result = self._make_request(
-                        "/api/generate",
-                        {
-                            "model": model,
-                            "prompt": "",  # Empty prompt
-                            "max_tokens": 1,  # Minimal tokens
-                            "stream": False,
-                        },
-                        node=n,
-                        timeout=30,  # Allow time for model loading
-                    )
+                    url = f"http://{n['host']}:{n['port']}/api/generate"
+                    payload = {
+                        "model": model,
+                        "prompt": "",  # Empty prompt
+                        "options": {"num_predict": 1},  # Generate only 1 token
+                        "stream": False,
+                    }
 
-                    if result:
+                    # Use persistent session with extended timeout for model loading
+                    # 600s allows large models to load even on CPU-only or slow systems
+                    response = self.session.post(url, json=payload, timeout=600)
+
+                    if response.status_code == 200:
                         logger.info(f"✅ Model '{model}' warmed on {node_key}")
                     else:
-                        logger.warning(f"⚠️  Failed to warm model '{model}' on {node_key}")
+                        logger.warning(
+                            f"⚠️  Failed to warm model '{model}' on {node_key}: HTTP {response.status_code}"
+                        )
                         return False
 
                 except Exception as e:
