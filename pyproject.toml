@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sollol"
-version = "0.9.47"
+version = "0.9.53"
 description = "Intelligent Load Balancer for Ollama Clusters - Adaptive Parallelism + VRAM-Aware GPU Routing + Ray/Dask/llama.cpp Distribution"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -45,6 +45,7 @@ dependencies = [
     "starlette>=0.27.0",
     "redis>=5.0.0",
     "bokeh>=3.1.0",
+    "gpustat>=1.0.0",
 ]
 
 [project.optional-dependencies]

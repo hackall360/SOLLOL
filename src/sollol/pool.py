@@ -16,6 +16,7 @@ import json
 import logging
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
@@ -105,7 +106,7 @@ class OllamaPool:
         enable_ray: bool = False,
         enable_dask: bool = True,
         dask_address: Optional[str] = None,
-        enable_gpu_redis: bool = False,
+        enable_gpu_redis: bool = True,
         redis_host: str = "localhost",
         redis_port: int = 6379,
         enable_cache: bool = True,
@@ -125,7 +126,7 @@ class OllamaPool:
             enable_ray: Initialize Ray cluster for multi-app coordination (default: False)
             enable_dask: Use Dask for distributed batch processing (default: True)
             dask_address: Dask scheduler address (None = auto-connect or start local)
-            enable_gpu_redis: Subscribe to accurate GPU stats from Redis (requires gpu_reporter.py on nodes)
+            enable_gpu_redis: Subscribe to accurate GPU stats from Redis via gpustat (default: True, requires gpu_reporter.py on nodes)
             redis_host: Redis server hostname (default: localhost)
             redis_port: Redis server port (default: 6379)
             enable_cache: Enable response caching (default: True)
@@ -252,6 +253,28 @@ class OllamaPool:
             "node_performance": {},  # Track performance per node
         }
 
+        # Latency buffer for percentile calculation (rolling window of last 1000 requests)
+        self._latency_buffer = deque(maxlen=1000)
+
+        # Redis client for publishing metrics to dashboard
+        self._metrics_redis_client = None
+        if enable_gpu_redis:  # Reuse Redis connection settings
+            try:
+                import redis
+                self._metrics_redis_client = redis.Redis(
+                    host=redis_host,
+                    port=redis_port,
+                    decode_responses=False,  # We'll handle JSON encoding
+                    socket_connect_timeout=2,
+                    socket_timeout=2
+                )
+                # Test connection
+                self._metrics_redis_client.ping()
+                logger.debug(f"📊 Metrics Redis connected at {redis_host}:{redis_port}")
+            except Exception as e:
+                logger.debug(f"Metrics Redis unavailable (metrics won't be published): {e}")
+                self._metrics_redis_client = None
+
         # Deduplicate nodes (removes localhost if real IP exists)
         self._deduplicate_nodes()
 
@@ -298,6 +321,16 @@ class OllamaPool:
             except Exception as e:
                 logger.warning(f"Failed to start GPU Redis subscriber: {e}")
 
+        # Start metrics publishing thread (publishes p50/p95/p99 latency to Redis)
+        if self._metrics_redis_client:
+            self._metrics_thread = threading.Thread(
+                target=self._publish_metrics_loop,
+                daemon=True,
+                name="OllamaPool-Metrics-Publisher"
+            )
+            self._metrics_thread.start()
+            logger.debug("📊 Metrics publisher thread started")
+
         logger.info(
             f"OllamaPool initialized with {len(self.nodes)} nodes "
             f"(intelligent_routing={'enabled' if enable_intelligent_routing else 'disabled'}, "
@@ -307,20 +340,55 @@ class OllamaPool:
         )
 
         # Auto-register with SOLLOL dashboard if available
-        self._auto_register_with_dashboard()
+        if self.register_with_dashboard:
+            self._auto_register_with_dashboard()
 
     @classmethod
-    def auto_configure(cls, discover_all_nodes: bool = False, **kwargs) -> "OllamaPool":
+    def auto_configure(
+        cls,
+        discover_all_nodes: bool = False,
+        setup_local_gpu_monitoring: bool = False,
+        **kwargs
+    ) -> "OllamaPool":
         """
         Create pool with automatic discovery.
 
         Args:
             discover_all_nodes: If True, scan full network for ALL nodes (default: False for speed)
+            setup_local_gpu_monitoring: If True, auto-setup GPU monitoring on localhost (default: False)
             **kwargs: Additional arguments passed to __init__ (e.g., enable_cache, cache_max_size, cache_ttl)
 
         Returns:
             OllamaPool instance ready to use
+
+        Example:
+            >>> # Auto-discover nodes and setup local GPU monitoring
+            >>> pool = OllamaPool.auto_configure(setup_local_gpu_monitoring=True)
         """
+        # Auto-setup GPU monitoring on localhost if requested
+        if setup_local_gpu_monitoring:
+            try:
+                from .gpu_auto_setup import auto_setup_gpu_monitoring
+                logger.info("🔧 Setting up local GPU monitoring...")
+
+                redis_host = kwargs.get("redis_host", "localhost")
+                redis_port = kwargs.get("redis_port", 6379)
+
+                success = auto_setup_gpu_monitoring(
+                    redis_host=redis_host,
+                    redis_port=redis_port,
+                    auto_install=True,
+                    auto_start=True,
+                )
+
+                if success:
+                    logger.info("✅ Local GPU monitoring ready")
+                else:
+                    logger.warning("⚠️  GPU monitoring setup failed (continuing anyway)")
+
+            except Exception as e:
+                logger.warning(f"⚠️  GPU monitoring setup failed: {e} (continuing anyway)")
+
         return cls(nodes=None, discover_all_nodes=discover_all_nodes, **kwargs)
 
     def _auto_discover(self):
@@ -640,6 +708,9 @@ class OllamaPool:
                 # Calculate latency
                 latency_ms = (time.time() - start_time) * 1000
 
+                # Record latency for percentile calculation
+                self._latency_buffer.append(latency_ms)
+
                 # Detect VRAM exhaustion (FlockParser pattern)
                 vram_exhausted = self.health_monitor.detect_vram_exhaustion(node_key, latency_ms)
                 if vram_exhausted:
@@ -835,6 +906,9 @@ class OllamaPool:
                         # Calculate total latency
                         latency_ms = (time.time() - start_time) * 1000
 
+                        # Record latency for percentile calculation
+                        self._latency_buffer.append(latency_ms)
+
                         # Update metrics
                         with self._lock:
                             perf = self.stats["node_performance"][node_key]
@@ -902,6 +976,9 @@ class OllamaPool:
 
                         # Calculate total latency
                         latency_ms = (time.time() - start_time) * 1000
+
+                        # Record latency for percentile calculation
+                        self._latency_buffer.append(latency_ms)
 
                         # Update metrics
                         with self._lock:
@@ -1140,28 +1217,42 @@ class OllamaPool:
             if local_vram and local_vram.get("total_vram_mb", 0) > 0:
                 # nvidia-smi worked - use accurate total
                 total_vram_mb = local_vram.get("total_vram_mb", 0)
+                has_actual_gpu = True
             else:
                 # nvidia-smi failed - try model-based estimation
                 estimated_vram = self._estimate_gpu_vram_from_model()
                 if estimated_vram > 0:
                     total_vram_mb = estimated_vram
+                    has_actual_gpu = True
                 elif total_vram_used_mb > 0:
                     # Model is loaded but we don't know GPU capacity (remote node without nvidia-smi)
                     # Assume at least 8GB for modern GPUs (most common: 3060/3070/4060/4070)
                     # If model uses more than 8GB, assume 2GB headroom above that
                     min_reasonable_vram = 8192  # 8GB minimum
                     total_vram_mb = max(min_reasonable_vram, total_vram_used_mb + 2048)
+                    has_actual_gpu = True
                     logger.debug(f"Unknown GPU capacity, assuming {total_vram_mb:.0f}MB (used: {total_vram_used_mb:.0f}MB)")
                 else:
-                    # Nothing loaded and unknown GPU - assume small GPU
-                    total_vram_mb = 2048  # 2GB conservative default
-                    logger.warning("Unknown GPU with no loaded models, assuming 2GB capacity")
+                    # Nothing loaded and unknown GPU
+                    has_actual_gpu = False
+                    total_vram_mb = 0
 
-            # If no models are using GPU (all size_vram=0), treat as CPU-only node
-            # This prevents misidentifying CPU-only nodes that happen to have a GPU installed
-            if not has_gpu_loaded_models:
-                logger.debug("Node has no GPU-loaded models (all size_vram=0), treating as CPU-only")
+            # IMPORTANT: Only return 0 if we're certain there's no GPU hardware
+            # If GPU hardware exists but no generation models loaded (only embeddings),
+            # still return available VRAM so node can be considered for routing
+            if not has_actual_gpu and not has_gpu_loaded_models:
+                logger.debug("No GPU hardware detected, treating as CPU-only")
                 return 0
+
+            # If GPU hardware exists but no models loaded, assume all VRAM is free
+            if has_actual_gpu and not has_gpu_loaded_models:
+                if total_vram_mb == 0:
+                    # GPU exists but capacity unknown - assume 6GB (common for entry-level GPUs)
+                    total_vram_mb = 6144
+                    logger.debug(f"GPU detected with no loaded models, assuming {total_vram_mb}MB capacity")
+                free_vram_mb_with_buffer = total_vram_mb - self.VRAM_BUFFER_MB
+                logger.debug(f"GPU hardware present, {free_vram_mb_with_buffer}MB available (no generation models loaded)")
+                return int(max(0, free_vram_mb_with_buffer))
 
             # Calculate free VRAM with safety buffer
             free_vram_mb = max(0, total_vram_mb - total_vram_used_mb)
@@ -1173,6 +1264,43 @@ class OllamaPool:
         except Exception as e:
             logger.debug(f"Failed to parse VRAM from /api/ps: {e}")
             return 0
+
+    def _query_loaded_models(self, node: Dict[str, Any]) -> List[str]:
+        """
+        Query which models are currently loaded on a node via /api/ps.
+
+        This helps avoid cold model load times by preferring nodes that already
+        have the target model loaded in VRAM.
+
+        Args:
+            node: Node dictionary with 'host' and 'port'
+
+        Returns:
+            List of loaded model names (e.g., ['llama3.1:8b', 'mxbai-embed-large'])
+        """
+        try:
+            url = f"http://{node['host']}:{node['port']}/api/ps"
+            response = self.session.get(url, timeout=2)
+
+            if response.status_code != 200:
+                return []
+
+            data = response.json()
+            models = data.get("models", [])
+
+            # Extract model names from running models
+            loaded_model_names = []
+            for model in models:
+                model_name = model.get("name", "")
+                if model_name:
+                    # Normalize model name (e.g., "llama3.1:8b" or "mxbai-embed-large:latest")
+                    loaded_model_names.append(model_name)
+
+            return loaded_model_names
+
+        except Exception as e:
+            logger.debug(f"Failed to query loaded models from {node['host']}:{node['port']}: {e}")
+            return []
 
     def _auto_register_with_dashboard(self):
         """
@@ -1243,9 +1371,13 @@ class OllamaPool:
                             # Query current VRAM
                             gpu_free_mem = self._query_node_vram(node)
 
+                            # Query loaded models from /api/ps to avoid cold loads
+                            loaded_models = self._query_loaded_models(node)
+
                             # Update metadata
                             old_vram = self.stats["node_performance"][node_key].get("gpu_free_mem", 0)
                             self.stats["node_performance"][node_key]["gpu_free_mem"] = gpu_free_mem
+                            self.stats["node_performance"][node_key]["loaded_models"] = loaded_models
 
                             # Log significant changes
                             if abs(gpu_free_mem - old_vram) > 1000:  # >1GB change
@@ -1331,7 +1463,7 @@ class OllamaPool:
                             response = self.session.get(url, timeout=2)
                             latency_ms = (time.time() - start_time) * 1000
 
-                            if response.ok:
+                            if response.status_code == 200:
                                 # Check for status change
                                 old_status = "offline" if not perf_data.get("available", True) else "healthy"
                                 new_status = "healthy"
@@ -1420,6 +1552,63 @@ class OllamaPool:
                 logger.error(f"Health check loop error: {e}")
 
         logger.debug("Health check monitoring thread stopped")
+
+    def _publish_metrics_loop(self):
+        """Background thread to publish aggregated metrics to Redis every 5 seconds."""
+        logger.debug("Metrics publisher thread started")
+
+        while True:
+            try:
+                if self._metrics_redis_client and len(self._latency_buffer) > 0:
+                    import numpy as np
+
+                    # Get latency snapshot
+                    latencies = list(self._latency_buffer)
+
+                    # Calculate percentiles
+                    p50 = float(np.percentile(latencies, 50))
+                    p95 = float(np.percentile(latencies, 95))
+                    p99 = float(np.percentile(latencies, 99))
+
+                    # Calculate success rate
+                    with self._lock:
+                        success_rate = (
+                            self.stats["successful_requests"] /
+                            max(1, self.stats["total_requests"])
+                        )
+
+                    # Build metrics payload (wrapped in "metrics" key for dashboard compatibility)
+                    payload = {
+                        "metrics": {
+                            "analytics": {
+                                "p50_latency_ms": p50,
+                                "p95_latency_ms": p95,
+                                "p99_latency_ms": p99,
+                                "success_rate": success_rate
+                            },
+                            "total_pools": len(self.nodes)
+                        }
+                    }
+
+                    # Publish to Redis (30s TTL)
+                    self._metrics_redis_client.setex(
+                        "sollol:router:metadata",
+                        30,
+                        json.dumps(payload)
+                    )
+
+                    logger.debug(
+                        f"📊 Published metrics: p50={p50:.1f}ms, p95={p95:.1f}ms, "
+                        f"p99={p99:.1f}ms, success={success_rate:.2%}"
+                    )
+
+                time.sleep(5)
+
+            except Exception as e:
+                logger.debug(f"Metrics publishing error: {e}")
+                time.sleep(5)
+
+        logger.debug("Metrics publisher thread stopped")
 
     def _record_failure(self, node_key: str, latency_ms: float):
         """Record a failed request for a node."""

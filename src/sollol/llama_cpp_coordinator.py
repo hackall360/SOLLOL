@@ -20,6 +20,7 @@ We manage starting the coordinator and intelligently selecting healthy RPC backe
 import asyncio
 import logging
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -27,6 +28,14 @@ import httpx
 
 if TYPE_CHECKING:
     from sollol.rpc_registry import RPCBackendRegistry
+
+from .network_observer import (
+    log_rpc_request,
+    log_rpc_response,
+    log_rpc_error,
+    EventType,
+    get_observer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +106,10 @@ class LlamaCppCoordinator:
 
         self.process: Optional[subprocess.Popen] = None
         self.http_client = httpx.AsyncClient(timeout=300.0)
+
+        # Heartbeat for live monitoring
+        self._heartbeat_task: Optional[asyncio.Task] = None
+        self._heartbeat_interval = 30  # seconds
 
     def _get_healthy_backends(self) -> List[RPCBackend]:
         """
@@ -180,6 +193,10 @@ class LlamaCppCoordinator:
                 f"with {len(self.rpc_backends)} RPC backends"
             )
 
+            # Start heartbeat loop for dashboard visibility
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            logger.debug("RPC heartbeat monitoring started")
+
         except Exception as e:
             logger.error(f"Failed to start llama-server: {e}")
             raise
@@ -201,6 +218,37 @@ class LlamaCppCoordinator:
 
             await asyncio.sleep(0.5)
 
+    async def _heartbeat_loop(self):
+        """Periodically log RPC coordinator heartbeat for dashboard visibility."""
+        logger.debug("RPC heartbeat loop started")
+
+        while True:
+            try:
+                await asyncio.sleep(self._heartbeat_interval)
+
+                # Log heartbeat event
+                observer = get_observer()
+                observer.log_event(
+                    EventType.RPC_BACKEND_CONNECT,
+                    backend=f"{self.host}:{self.port}",
+                    details={
+                        "model": "coordinator",
+                        "rpc_backends": len(self.rpc_backends),
+                        "rpc_addresses": [b.address for b in self.rpc_backends],
+                        "status": "healthy",
+                        "type": "heartbeat"
+                    },
+                    severity="info"
+                )
+
+                logger.debug(f"RPC heartbeat: {len(self.rpc_backends)} backends connected")
+
+            except asyncio.CancelledError:
+                logger.debug("RPC heartbeat loop cancelled")
+                break
+            except Exception as e:
+                logger.error(f"RPC heartbeat error: {e}")
+
     async def generate(
         self, prompt: str, max_tokens: int = 512, temperature: float = 0.7, **kwargs
     ) -> Dict[str, Any]:
@@ -216,20 +264,56 @@ class LlamaCppCoordinator:
         Returns:
             Response from llama-server
         """
-        payload = {
-            "prompt": prompt,
-            "n_predict": max_tokens,
-            "temperature": temperature,
-            "stream": False,
-            **kwargs,
-        }
+        # Log request to observer
+        backend_key = f"{self.host}:{self.port}"
+        model = kwargs.get("model", "distributed")
 
-        response = await self.http_client.post(
-            f"http://{self.host}:{self.port}/completion", json=payload
+        log_rpc_request(
+            backend=backend_key,
+            model=model,
+            rpc_backends=len(self.rpc_backends),
+            operation="generate"
         )
-        response.raise_for_status()
 
-        return response.json()
+        start_time = time.time()
+
+        try:
+            payload = {
+                "prompt": prompt,
+                "n_predict": max_tokens,
+                "temperature": temperature,
+                "stream": False,
+                **kwargs,
+            }
+
+            response = await self.http_client.post(
+                f"http://{self.host}:{self.port}/completion", json=payload
+            )
+            response.raise_for_status()
+
+            latency_ms = (time.time() - start_time) * 1000
+
+            # Log successful response
+            log_rpc_response(
+                backend=backend_key,
+                model=model,
+                latency_ms=latency_ms,
+                rpc_backends=len(self.rpc_backends)
+            )
+
+            return response.json()
+
+        except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+
+            # Log error
+            log_rpc_error(
+                backend=backend_key,
+                model=model,
+                error=str(e),
+                latency_ms=latency_ms
+            )
+            raise
 
     async def chat(
         self,
@@ -250,23 +334,68 @@ class LlamaCppCoordinator:
         Returns:
             Response from llama-server
         """
-        payload = {
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "stream": False,
-            **kwargs,
-        }
+        # Log request to observer
+        backend_key = f"{self.host}:{self.port}"
+        model = kwargs.get("model", "distributed")
 
-        response = await self.http_client.post(
-            f"http://{self.host}:{self.port}/v1/chat/completions", json=payload
+        log_rpc_request(
+            backend=backend_key,
+            model=model,
+            rpc_backends=len(self.rpc_backends),
+            operation="chat"
         )
-        response.raise_for_status()
 
-        return response.json()
+        start_time = time.time()
+
+        try:
+            payload = {
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": False,
+                **kwargs,
+            }
+
+            response = await self.http_client.post(
+                f"http://{self.host}:{self.port}/v1/chat/completions", json=payload
+            )
+            response.raise_for_status()
+
+            latency_ms = (time.time() - start_time) * 1000
+
+            # Log successful response
+            log_rpc_response(
+                backend=backend_key,
+                model=model,
+                latency_ms=latency_ms,
+                rpc_backends=len(self.rpc_backends)
+            )
+
+            return response.json()
+
+        except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+
+            # Log error
+            log_rpc_error(
+                backend=backend_key,
+                model=model,
+                error=str(e),
+                latency_ms=latency_ms
+            )
+            raise
 
     async def stop(self):
         """Stop the llama-server coordinator."""
+        # Stop heartbeat task
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            logger.debug("RPC heartbeat monitoring stopped")
+
         if self.process:
             self.process.terminate()
             try:

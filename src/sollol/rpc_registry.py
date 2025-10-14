@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from sollol.rpc_discovery import check_rpc_server
+from sollol.network_observer import EventType, get_observer
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,21 @@ class RPCBackendRegistry:
         self.backends[address] = backend
 
         logger.info(f"Added RPC backend: {address} (healthy={backend.is_healthy})")
+
+        # Publish backend registration event to dashboard
+        observer = get_observer()
+        observer.log_event(
+            EventType.RPC_BACKEND_CONNECT,
+            backend=address,
+            details={
+                "model": "rpc_registry",
+                "action": "backend_added",
+                "status": "healthy" if backend.is_healthy else "unhealthy",
+                "total_backends": len(self.backends),
+            },
+            severity="info"
+        )
+
         return backend
 
     def remove_backend(self, host: str, port: int = 50052) -> bool:
@@ -197,6 +213,26 @@ class RPCBackendRegistry:
 
         healthy_count = sum(1 for h in results.values() if h)
         logger.info(f"Health check: {healthy_count}/{len(results)} RPC backends healthy")
+
+        # Publish heartbeat to dashboard with overall status
+        if self.backends:
+            observer = get_observer()
+            healthy_backends = [addr for addr, is_healthy in results.items() if is_healthy]
+
+            observer.log_event(
+                EventType.RPC_BACKEND_CONNECT,
+                backend="rpc_registry",
+                details={
+                    "model": "rpc_backends",
+                    "rpc_backends": healthy_count,
+                    "rpc_addresses": healthy_backends,
+                    "status": "healthy" if healthy_count > 0 else "unhealthy",
+                    "type": "heartbeat",
+                    "total_configured": len(self.backends),
+                    "total_active": healthy_count,
+                },
+                severity="info"
+            )
 
         return results
 

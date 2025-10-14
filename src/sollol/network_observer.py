@@ -313,7 +313,8 @@ class NetworkObserver:
             channel = None
             if event.event_type in [EventType.OLLAMA_REQUEST, EventType.OLLAMA_RESPONSE, EventType.OLLAMA_ERROR]:
                 channel = "sollol:dashboard:ollama:activity"
-            elif event.event_type in [EventType.RPC_REQUEST, EventType.RPC_RESPONSE, EventType.RPC_ERROR]:
+            elif event.event_type in [EventType.RPC_REQUEST, EventType.RPC_RESPONSE, EventType.RPC_ERROR,
+                                       EventType.RPC_BACKEND_CONNECT, EventType.RPC_BACKEND_DISCONNECT]:
                 channel = "sollol:dashboard:rpc:activity"
 
             if not channel:
@@ -434,7 +435,8 @@ def get_observer() -> NetworkObserver:
 
     with _observer_lock:
         if _global_observer is None:
-            _global_observer = NetworkObserver()
+            # Use 100% sampling for dashboard visibility (was 10% by default)
+            _global_observer = NetworkObserver(sample_rate=1.0)
 
         return _global_observer
 
