@@ -622,8 +622,9 @@ class HybridRouter:
 
     async def _check_if_model_fits_ollama(self, model: str) -> bool:
         """
-        Check if model can fit on Ollama nodes by comparing estimated model size
-        to available system resources.
+        Check if model can fit on Ollama nodes by checking:
+        1. Current VRAM availability across all nodes
+        2. Estimated model size vs available memory
 
         Args:
             model: Model name
@@ -633,6 +634,30 @@ class HybridRouter:
         """
         if not self.ollama_pool:
             return False
+
+        # CRITICAL FIX: Check ACTUAL current VRAM on all nodes
+        # If all GPUs are overwhelmed (<2000MB), route to RPC instead of CPU fallback
+        stats = self.ollama_pool.get_stats()
+        node_performance = stats.get("node_performance", {})
+
+        if node_performance:
+            # Get VRAM for all nodes with GPU
+            gpu_nodes = [
+                node for node in node_performance.values()
+                if node.get("gpu_free_mem", 0) > 0
+            ]
+
+            if gpu_nodes:
+                all_gpus_overwhelmed = all(
+                    node.get("gpu_free_mem", 0) < 2000
+                    for node in gpu_nodes
+                )
+
+                if all_gpus_overwhelmed:
+                    logger.warning(
+                        f"⚠️  All Ollama GPUs overwhelmed (VRAM < 2000MB) - routing to RPC sharding"
+                    )
+                    return False
 
         # Get model size estimate
         profile = self._get_model_profile(model)

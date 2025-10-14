@@ -188,13 +188,17 @@ class IntelligentRouter:
         complexity, tokens = self.estimate_complexity(payload)
 
         # Determine if GPU is beneficial
-        requires_gpu = task_type in [
-            "generation",
-            "embedding",
-            "summarization",
-            "analysis",
-            "extraction",  # PDF extraction benefits from GPU
-        ] and complexity in ["medium", "complex"]
+        # Embeddings ALWAYS benefit from GPU (vector operations)
+        # Other tasks benefit from GPU for medium/complex workloads
+        if task_type == "embedding":
+            requires_gpu = True  # Always use GPU for embeddings
+        else:
+            requires_gpu = task_type in [
+                "generation",
+                "summarization",
+                "analysis",
+                "extraction",  # PDF extraction benefits from GPU
+            ] and complexity in ["medium", "complex"]
 
         # Estimate duration based on historical data
         estimated_duration = self._estimate_duration(task_type, tokens)
@@ -455,30 +459,35 @@ class IntelligentRouter:
             score /= 1 + latency_penalty
 
         # Factor 4: Additional load considerations
-        # Active concurrent requests - VRAM-aware load balancing
-        # Penalty proportional to VRAM capacity to avoid overloading small GPUs
+        # Active concurrent requests - EXPONENTIAL penalty to force distribution
+        # CRITICAL: Must distribute work across nodes, not pile onto one "best" node
         active_requests = host_meta.get("active_requests", 0)
         if active_requests > 0:
             gpu_mem = host_meta.get("gpu_free_mem", 4000)  # Default to mid-range
 
-            # Calculate penalty based on VRAM capacity
-            # Small GPUs get penalized more heavily per request (avoid overload)
-            # Large GPUs can handle more concurrent requests
+            # Calculate exponential penalty based on VRAM capacity
+            # Small GPUs saturate faster (exponential base 3.0)
+            # Large GPUs can handle more (exponential base 2.0)
             if gpu_mem < 2000:
-                # Small GPU (1050Ti) - each request is significant load
-                penalty_per_request = 0.50  # 50% penalty per request (aggressive)
+                # Small GPU (1050Ti) - saturates very quickly
+                # 0 req: 1.0x, 1 req: 0.33x, 2 req: 0.11x, 3 req: 0.04x
+                exponential_base = 3.0
             elif gpu_mem < 4000:
-                # Mid-small GPU (2-4GB) - moderate-high penalty
-                penalty_per_request = 0.35  # 35% penalty per request
+                # Mid-small GPU (2-4GB) - saturates quickly
+                # 0 req: 1.0x, 1 req: 0.40x, 2 req: 0.16x, 3 req: 0.06x
+                exponential_base = 2.5
             elif gpu_mem < 8000:
-                # Mid GPU (4-8GB, like 3060) - moderate penalty
-                penalty_per_request = 0.25  # 25% penalty per request
+                # Mid GPU (4-8GB, like 3060) - moderate saturation
+                # 0 req: 1.0x, 1 req: 0.50x, 2 req: 0.25x, 3 req: 0.13x
+                exponential_base = 2.0
             else:
-                # Large GPU (8GB+, like 4090/5090) - light penalty
-                penalty_per_request = 0.15  # 15% penalty per request (can handle load)
+                # Large GPU (8GB+, like 4090/5090) - slow saturation
+                # 0 req: 1.0x, 1 req: 0.67x, 2 req: 0.44x, 3 req: 0.30x
+                exponential_base = 1.5
 
-            active_penalty = active_requests * penalty_per_request
-            score /= 1 + active_penalty
+            # EXPONENTIAL penalty: score / (base ^ requests)
+            # This FORCES distribution by making loaded nodes dramatically worse
+            score /= (exponential_base ** active_requests)
 
         # CPU load - historical average
         # Penalize heavily loaded nodes more for high-priority tasks
@@ -488,7 +497,27 @@ class IntelligentRouter:
             load_penalty = cpu_load * 1.5  # Standard penalty
         score /= 1 + load_penalty
 
-        # Factor 5: Priority alignment
+        # Factor 5: Model warmth (avoid cold loads)
+        # CRITICAL: Give huge bonus to nodes with model already loaded (avoid 18+ sec cold loads)
+        if context.model_preference:
+            loaded_models = host_meta.get("loaded_models", [])
+            # Check if target model is loaded (handle both "model" and "model:tag" formats)
+            model_base = context.model_preference.split(':')[0]
+            is_loaded = any(
+                context.model_preference == loaded or
+                model_base in loaded or
+                loaded.startswith(model_base)
+                for loaded in loaded_models
+            )
+            if is_loaded:
+                # Model already loaded - MASSIVE bonus (3x score) to avoid cold loads
+                score *= 3.0
+                logger.debug(f"   ✅ Model {context.model_preference} already loaded on {host_meta.get('host', 'unknown')} - 3x bonus")
+            elif loaded_models:  # Has other models loaded
+                # Not loaded - slight penalty for nodes with full VRAM
+                score *= 0.95
+
+        # Factor 6: Priority alignment
         # Prefer priority 0 hosts for high-priority tasks
         host_priority = host_meta.get("priority", 999)
         if host_priority == 0 and context.priority >= 7:
