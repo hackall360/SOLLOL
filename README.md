@@ -1124,6 +1124,16 @@ curl http://localhost:9090/metrics
 
 ## 🔌 Integration Examples
 
+### Production Integrations
+
+**SOLLOL is actively used in production by:**
+
+- **[FlockParser](https://github.com/BenevolentJoker-JohnL/FlockParser)** - PDF document processing with RAG capabilities. FlockParser's legacy load balancing code was refactored and became core SOLLOL logic. FlockParser now uses SOLLOL directly via `OllamaPool` for intelligent routing across document embeddings and LLM queries.
+
+- **[SynapticLlamas](https://github.com/BenevolentJoker-JohnL/SynapticLlamas)** - Multi-agent collaborative research framework. Uses SOLLOL's `HybridRouter` for distributed agent execution with RAG-enhanced research capabilities.
+
+---
+
 ### SynapticLlamas Integration
 
 ```python
@@ -1142,6 +1152,26 @@ orchestrator = AgentOrchestrator(
 
 # All agents automatically distributed and optimized
 orchestrator.run_parallel_agents([...])
+```
+
+### FlockParser Integration
+
+```python
+from sollol import OllamaPool
+
+# FlockParser uses SOLLOL's OllamaPool directly
+pool = OllamaPool(
+    nodes=None,  # Auto-discover all Ollama nodes
+    enable_intelligent_routing=True,
+    exclude_localhost=True,
+    discover_all_nodes=True,
+    app_name="FlockParser",
+    enable_ray=True
+)
+
+# All FlockParser document embeddings and queries route through SOLLOL
+embeddings = pool.embed(model="mxbai-embed-large", input="document text")
+response = pool.chat(model="llama3.2", messages=[{"role": "user", "content": "query"}])
 ```
 
 ### LangChain Integration
