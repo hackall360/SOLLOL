@@ -42,7 +42,52 @@ SOLLOL provides:
 
 ---
 
-## 🚀 Why SOLLOL?
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+pip install sollol
+```
+
+### Basic Usage
+
+```python
+from sollol import OllamaPool
+
+# Auto-discover nodes and start routing
+pool = OllamaPool.auto_configure()
+
+# Make requests - SOLLOL routes intelligently
+response = pool.chat(
+    model="llama3.2",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+### Enable Real-Time GPU Monitoring
+
+For accurate VRAM-aware routing, install the GPU reporter on each node:
+
+```bash
+# On each Ollama node, run:
+sollol install-gpu-reporter --redis-host <redis-server-ip>
+
+# Example:
+sollol install-gpu-reporter --redis-host 10.9.66.154
+```
+
+**What this does:**
+- Installs vendor-agnostic GPU monitoring (NVIDIA/AMD/Intel via `gpustat`)
+- Publishes real-time VRAM stats to Redis every 5 seconds
+- SOLLOL uses this data for intelligent routing decisions
+- See [GPU Monitoring Guide](GPU_MONITORING_GUIDE.md) for details
+
+**Without GPU monitoring:** SOLLOL falls back to estimates which may be inaccurate.
+
+---
+
+## 🔥 Why SOLLOL?
 
 ### 1. **Two Distribution Modes in One System**
 

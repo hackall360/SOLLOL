@@ -459,35 +459,54 @@ class IntelligentRouter:
             score /= 1 + latency_penalty
 
         # Factor 4: Additional load considerations
-        # Active concurrent requests - EXPONENTIAL penalty to force distribution
-        # CRITICAL: Must distribute work across nodes, not pile onto one "best" node
+        # Active concurrent requests - BALANCED exponential penalty
+        # Goal: Prioritize SPEED (fastest completion) over forced distribution
+        # A powerful GPU with 1 request may still be faster than weak GPU with 0 requests
         active_requests = host_meta.get("active_requests", 0)
         if active_requests > 0:
             gpu_mem = host_meta.get("gpu_free_mem", 4000)  # Default to mid-range
+            avg_latency = host_meta.get("latency_ms", 2000)  # Historical avg latency
 
-            # Calculate exponential penalty based on VRAM capacity
-            # Small GPUs saturate faster (exponential base 3.0)
-            # Large GPUs can handle more (exponential base 2.0)
+            # Calculate LIGHTER exponential penalty based on GPU capability
+            # Key insight: Powerful GPUs can handle multiple requests efficiently
+            # Small GPUs saturate quickly, large GPUs maintain performance
             if gpu_mem < 2000:
-                # Small GPU (1050Ti) - saturates very quickly
-                # 0 req: 1.0x, 1 req: 0.33x, 2 req: 0.11x, 3 req: 0.04x
-                exponential_base = 3.0
+                # Small GPU (1050Ti) - saturates quickly
+                # 0 req: 1.0x, 1 req: 0.50x, 2 req: 0.33x, 3 req: 0.25x
+                # Still usable with multiple requests, just slower
+                exponential_base = 1.5  # Reduced from 3.0
             elif gpu_mem < 4000:
-                # Mid-small GPU (2-4GB) - saturates quickly
-                # 0 req: 1.0x, 1 req: 0.40x, 2 req: 0.16x, 3 req: 0.06x
-                exponential_base = 2.5
+                # Mid-small GPU (2-4GB)
+                # 0 req: 1.0x, 1 req: 0.59x, 2 req: 0.42x, 3 req: 0.31x
+                exponential_base = 1.3  # Reduced from 2.5
             elif gpu_mem < 8000:
-                # Mid GPU (4-8GB, like 3060) - moderate saturation
-                # 0 req: 1.0x, 1 req: 0.50x, 2 req: 0.25x, 3 req: 0.13x
-                exponential_base = 2.0
+                # Mid GPU (4-8GB, like 3060)
+                # 0 req: 1.0x, 1 req: 0.71x, 2 req: 0.56x, 3 req: 0.45x
+                exponential_base = 1.2  # Reduced from 2.0
             else:
-                # Large GPU (8GB+, like 4090/5090) - slow saturation
-                # 0 req: 1.0x, 1 req: 0.67x, 2 req: 0.44x, 3 req: 0.30x
-                exponential_base = 1.5
+                # Large GPU (8GB+, like 4090/5090) - minimal saturation
+                # 0 req: 1.0x, 1 req: 0.83x, 2 req: 0.71x, 3 req: 0.62x
+                # Powerful GPUs maintain good performance with multiple requests
+                exponential_base = 1.15  # Reduced from 1.5
+
+            # PERFORMANCE-AWARE: Adjust penalty based on actual latency
+            # Fast nodes (low latency) get reduced penalty - they're efficient
+            # Slow nodes (high latency) get increased penalty - already struggling
+            if avg_latency < 1000:  # Fast node (<1s avg)
+                # Reduce penalty for fast nodes - they can handle more
+                exponential_base = max(1.05, exponential_base * 0.8)
+            elif avg_latency > 5000:  # Slow node (>5s avg)
+                # Increase penalty for slow nodes - already overloaded
+                exponential_base = min(2.0, exponential_base * 1.3)
 
             # EXPONENTIAL penalty: score / (base ^ requests)
-            # This FORCES distribution by making loaded nodes dramatically worse
+            # Less aggressive than before - allows powerful nodes to stay competitive
             score /= (exponential_base ** active_requests)
+
+            # LINEAR penalty for fairness - combined with exponential
+            # This provides base load balancing without being too aggressive
+            linear_penalty = 0.15 * active_requests  # 15% per request
+            score /= (1 + linear_penalty)
 
         # CPU load - historical average
         # Penalize heavily loaded nodes more for high-priority tasks
@@ -510,9 +529,10 @@ class IntelligentRouter:
                 for loaded in loaded_models
             )
             if is_loaded:
-                # Model already loaded - MASSIVE bonus (3x score) to avoid cold loads
-                score *= 3.0
-                logger.debug(f"   ✅ Model {context.model_preference} already loaded on {host_meta.get('host', 'unknown')} - 3x bonus")
+                # Model already loaded - moderate bonus (1.5x) to avoid cold loads
+                # Reduced from 3x to allow GPU capability to matter more
+                score *= 1.5
+                logger.debug(f"   ✅ Model {context.model_preference} already loaded on {host_meta.get('host', 'unknown')} - 1.5x bonus")
             elif loaded_models:  # Has other models loaded
                 # Not loaded - slight penalty for nodes with full VRAM
                 score *= 0.95

@@ -135,9 +135,14 @@ class DashboardClient:
             return False
 
         try:
-            payload = {"app_id": self.app_id}
-            if metadata:
-                payload["metadata"] = metadata
+            # Include full registration info to support auto-registration on dashboard restart
+            payload = {
+                "app_id": self.app_id,
+                "name": self.app_name,
+                "router_type": self.router_type,
+                "version": self.version,
+                "metadata": metadata if metadata else self.metadata
+            }
 
             response = requests.post(
                 f"{self.dashboard_url}/api/applications/heartbeat",

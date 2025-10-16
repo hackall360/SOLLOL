@@ -416,7 +416,7 @@ class DashboardService:
 
                     return jsonify({"nodes": nodes_data, "total": len(nodes_data)})
 
-                # Last resort: auto-discover Ollama nodes with health check
+                # Last resort: auto-discover Ollama nodes with health check + GPU data from Redis
                 from sollol.discovery import discover_ollama_nodes
                 import requests
                 discovered = discover_ollama_nodes(timeout=0.5, discover_all_nodes=True, exclude_localhost=True)
@@ -427,6 +427,7 @@ class DashboardService:
                     host = n.get('host', 'localhost')
                     port = n.get('port', 11434)
                     url = f"http://{host}:{port}"
+                    node_key = f"{host}:{port}"
 
                     # Ping node for health and latency
                     try:
@@ -437,12 +438,45 @@ class DashboardService:
                         healthy = False
                         latency = 0
 
+                    # Try to get GPU data from Redis
+                    gpu_free_mb = 0
+                    gpu_total_mb = 0
+                    gpu_vendor = "unknown"
+                    try:
+                        gpu_key = f"sollol:gpu:{node_key}"
+                        logger.info(f"🔍 Looking up GPU data for node {node_key} with key: {gpu_key}")
+
+                        if not self.redis_client:
+                            logger.warning(f"❌ Redis client not initialized for GPU lookup")
+                        else:
+                            gpu_data_json = self.redis_client.get(gpu_key)
+                            logger.info(f"📊 Redis returned: {gpu_data_json[:100] if gpu_data_json else 'None'}")
+
+                            if gpu_data_json:
+                                gpu_data = json.loads(gpu_data_json)
+                                gpus = gpu_data.get("gpus", [])
+                                logger.info(f"✅ Found {len(gpus)} GPU(s) for {node_key}")
+
+                                if gpus:
+                                    # Sum up all GPUs (usually just 1)
+                                    gpu_free_mb = sum(g.get("memory_free_mb", 0) for g in gpus)
+                                    gpu_total_mb = sum(g.get("memory_total_mb", 0) for g in gpus)
+                                    gpu_vendor = gpu_data.get("vendor", "unknown")
+                                    logger.info(f"💾 GPU Stats: {gpu_free_mb}MB free / {gpu_total_mb}MB total ({gpu_vendor})")
+                            else:
+                                logger.warning(f"⚠️  No GPU data found in Redis for {node_key}")
+                    except Exception as e:
+                        logger.error(f"❌ Error fetching GPU data for {node_key}: {e}", exc_info=True)
+
                     nodes_data.append({
                         "url": url,
                         "status": "healthy" if healthy else "offline",
                         "latency_ms": latency,
                         "load_percent": 0,
-                        "memory_mb": 0
+                        "memory_mb": gpu_free_mb,
+                        "total_vram_mb": gpu_total_mb,
+                        "free_vram_mb": gpu_free_mb,
+                        "gpu_vendor": gpu_vendor
                     })
 
                 return jsonify({"nodes": nodes_data, "total": len(nodes_data)})
@@ -453,25 +487,21 @@ class DashboardService:
         @self.app.route("/api/rpc_backends")
         def rpc_backends():
             try:
-                # Try to get router metadata from Redis first
-                metadata_json = self.redis_client.get("sollol:router:metadata")
-                if metadata_json:
-                    metadata = json.loads(metadata_json)
-                    return jsonify(metadata.get("rpc_backends", []))
-
-                # Fallback to router_getter
-                router = self.router_getter()
-                if router and hasattr(router, "rpc_backends"):
-                    return jsonify(router.rpc_backends)
-
-                # Last resort: auto-discover RPC backends
+                # Always do fresh discovery (fast, avoids stale cache)
                 try:
                     from sollol.rpc_discovery import auto_discover_rpc_backends
                     discovered_backends = auto_discover_rpc_backends()
                     logger.info(f"Auto-discovered {len(discovered_backends)} RPC backends")
                     return jsonify(discovered_backends)
                 except Exception:
-                    return jsonify([])
+                    pass
+
+                # Fallback to router_getter
+                router = self.router_getter()
+                if router and hasattr(router, "rpc_backends"):
+                    return jsonify(router.rpc_backends)
+
+                return jsonify([])
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
@@ -552,6 +582,33 @@ class DashboardService:
                 logger.error(f"Error getting traces: {e}")
                 return jsonify({"error": str(e), "traces": [], "total": 0}), 500
 
+        @self.app.route("/api/routing_logs")
+        def routing_logs():
+            """Get routing decision logs from Redis stream."""
+            try:
+                # Get recent routing events from Redis stream
+                limit = int(request.args.get("limit", 100))
+                events = self.redis_client.xrevrange(
+                    "sollol:routing_stream",
+                    "+",
+                    "-",
+                    count=limit
+                )
+
+                logs = []
+                for event_id, event_data in events:
+                    # Parse the event JSON
+                    event_json = event_data.get(b"event", b"{}")
+                    if isinstance(event_json, bytes):
+                        event_json = event_json.decode("utf-8")
+                    event = json.loads(event_json)
+                    logs.append(event)
+
+                return jsonify({"logs": logs, "total": len(logs)})
+            except Exception as e:
+                logger.error(f"Error getting routing logs: {e}")
+                return jsonify({"error": str(e), "logs": [], "total": 0}), 500
+
         @self.app.route("/api/applications")
         def applications():
             """Get registered applications."""
@@ -610,10 +667,24 @@ class DashboardService:
                 data = request.get_json()
                 app_id = data.get("app_id")
 
-                if not app_id or app_id not in self.applications:
-                    return jsonify({"error": "Unknown app_id"}), 404
+                if not app_id:
+                    return jsonify({"error": "app_id required"}), 400
 
-                self.applications[app_id]["last_heartbeat"] = time.time()
+                # Auto-register unknown app_ids (handles dashboard restarts gracefully)
+                if app_id not in self.applications:
+                    app_name = data.get("name", "Unknown Application")
+                    self.applications[app_id] = {
+                        "name": app_name,
+                        "router_type": data.get("router_type", "unknown"),
+                        "version": data.get("version", "unknown"),
+                        "metadata": data.get("metadata", {}),
+                        "start_time": time.time(),
+                        "last_heartbeat": time.time()
+                    }
+                    logger.info(f"📱 Auto-registered application from heartbeat: {app_name} ({app_id})")
+                else:
+                    self.applications[app_id]["last_heartbeat"] = time.time()
+
                 return jsonify({"status": "ok"})
             except Exception as e:
                 logger.error(f"Error processing heartbeat: {e}")
@@ -831,6 +902,14 @@ class DashboardService:
                             display_msg = f"← RPC RESPONSE from {backend} ({latency_str})"
                         elif event_type == 'rpc_error':
                             display_msg = f"✗ RPC ERROR on {backend}: {details.get('error', 'unknown')}"
+                        elif event_type == 'rpc_backend_connect':
+                            # Show RPC backend addresses for heartbeat/connect events
+                            rpc_addresses = details.get('rpc_addresses', [])
+                            if rpc_addresses:
+                                addresses_str = ', '.join(rpc_addresses)
+                                display_msg = f"rpc_backend_connect on {backend}: {addresses_str}"
+                            else:
+                                display_msg = f"rpc_backend_connect on {backend}"
                         else:
                             display_msg = f"{event_type} on {backend}"
 

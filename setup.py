@@ -8,7 +8,7 @@ long_description = (this_directory / "README.md").read_text() if (this_directory
 
 setup(
     name="sollol",
-    version="0.9.47",
+    version="0.9.52",
     author="BenevolentJoker-JohnL",
     author_email="benevolentjoker@gmail.com",
     description="Super Ollama Load Balancer with Intelligent Routing and Distributed Inference",
@@ -54,6 +54,8 @@ setup(
         "uvicorn>=0.24.0",
         "starlette>=0.27.0",
         "bokeh>=3.1.0",
+        "gpustat>=1.0.0",
+        "redis>=5.0.0",
     ],
     extras_require={
         "dev": [

@@ -98,11 +98,12 @@ from sollol.adaptive_parallelism import AdaptiveParallelismStrategy
 
 # GPU monitoring
 from sollol.gpu_redis_subscriber import GPURedisSubscriber
+from sollol.gpu_auto_setup import GPUAutoSetup, auto_setup_gpu_monitoring
 
 # Legacy support
 from sollol.sollol import SOLLOL
 
-__version__ = "0.9.47"
+__version__ = "0.9.52"
 __all__ = [
     # Core
     "OllamaPool",
@@ -143,6 +144,8 @@ __all__ = [
     "check_rpc_server",
     "RPCAutoSetup",
     "RPCBackendRegistry",
+    "GPUAutoSetup",
+    "auto_setup_gpu_monitoring",
     # Docker IP Resolution
     "is_docker_ip",
     "resolve_docker_ip",

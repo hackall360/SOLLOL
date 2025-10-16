@@ -14,13 +14,50 @@ Architecture:
 import asyncio
 import json
 import logging
+import os
 import struct
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Initialize Redis client for dashboard activity publishing
+_redis_client = None
+REDIS_RPC_ACTIVITY_CHANNEL = "sollol:dashboard:rpc:activity"
+
+
+def _get_redis_client():
+    """Lazy initialization of Redis client for activity publishing."""
+    global _redis_client
+    if _redis_client is None:
+        try:
+            import redis
+            redis_url = os.getenv("SOLLOL_REDIS_URL", "redis://localhost:6379")
+            _redis_client = redis.from_url(redis_url, decode_responses=True)
+        except Exception as e:
+            logger.warning(f"Failed to initialize Redis client for RPC activity: {e}")
+            _redis_client = False  # Mark as failed to avoid retries
+    return _redis_client if _redis_client is not False else None
+
+
+def _publish_rpc_activity(event_type: str, backend: str, details: Dict[str, Any] = None):
+    """Publish RPC activity event to Redis for dashboard monitoring."""
+    try:
+        redis_client = _get_redis_client()
+        if redis_client:
+            activity_data = {
+                "event_type": event_type,
+                "backend": backend,
+                "timestamp": time.time(),
+                "details": details or {}
+            }
+            redis_client.publish(REDIS_RPC_ACTIVITY_CHANNEL, json.dumps(activity_data))
+    except Exception as e:
+        # Silently fail - don't let observability break core functionality
+        logger.debug(f"Failed to publish RPC activity: {e}")
 
 
 @dataclass
@@ -99,12 +136,35 @@ class LlamaCppRPCClient:
             Response with generated text or activations
         """
         payload = {"prompt": prompt, "stream": False, **(options or {})}
+        backend = self.node.url
+        start_time = time.time()
+
+        # Publish RPC request event
+        _publish_rpc_activity("rpc_request", backend, {
+            "prompt_length": len(prompt) if isinstance(prompt, str) else 0,
+            "endpoint": "/completion"
+        })
 
         try:
             response = await self.client.post(f"{self.node.http_url}/completion", json=payload)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+
+            # Publish RPC response event with latency
+            latency_ms = (time.time() - start_time) * 1000
+            _publish_rpc_activity("rpc_response", backend, {
+                "latency_ms": latency_ms,
+                "status_code": response.status_code
+            })
+
+            return result
         except Exception as e:
+            # Publish RPC error event
+            latency_ms = (time.time() - start_time) * 1000
+            _publish_rpc_activity("rpc_error", backend, {
+                "error": str(e),
+                "latency_ms": latency_ms
+            })
             logger.error(f"Generation failed on {self.node.url}: {e}")
             raise
 

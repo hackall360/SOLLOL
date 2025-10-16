@@ -152,6 +152,54 @@ class MetricsCollector:
         if len(self.request_completions) > self.max_history:
             self.request_completions = self.request_completions[-self.max_history :]
 
+    def get_latency_percentiles(self) -> Dict[str, float]:
+        """
+        Calculate P50/P95/P99 latency percentiles from request history.
+
+        Returns:
+            Dict with p50_latency_ms, p95_latency_ms, p99_latency_ms
+        """
+        if not self.request_completions:
+            return {
+                "p50_latency_ms": 0.0,
+                "p95_latency_ms": 0.0,
+                "p99_latency_ms": 0.0
+            }
+
+        # Extract durations
+        durations = [r["duration_ms"] for r in self.request_completions]
+
+        # Calculate percentiles using numpy
+        try:
+            import numpy as np
+            p50 = float(np.percentile(durations, 50))
+            p95 = float(np.percentile(durations, 95))
+            p99 = float(np.percentile(durations, 99))
+        except ImportError:
+            # Fallback to manual percentile calculation if numpy not available
+            sorted_durations = sorted(durations)
+            n = len(sorted_durations)
+
+            def get_percentile(data, percentile):
+                k = (n - 1) * (percentile / 100.0)
+                f = int(k)
+                c = f + 1
+                if c >= n:
+                    return data[-1]
+                d0 = data[f]
+                d1 = data[c]
+                return d0 + (d1 - d0) * (k - f)
+
+            p50 = get_percentile(sorted_durations, 50)
+            p95 = get_percentile(sorted_durations, 95)
+            p99 = get_percentile(sorted_durations, 99)
+
+        return {
+            "p50_latency_ms": p50,
+            "p95_latency_ms": p95,
+            "p99_latency_ms": p99
+        }
+
     def get_summary(self) -> Dict[str, Any]:
         """Get summary statistics."""
         total_requests = len(self.request_completions)
@@ -160,6 +208,9 @@ class MetricsCollector:
         avg_duration = 0.0
         if total_requests > 0:
             avg_duration = sum(r["duration_ms"] for r in self.request_completions) / total_requests
+
+        # Get latency percentiles
+        percentiles = self.get_latency_percentiles()
 
         return {
             "total_routing_decisions": len(self.routing_decisions),
@@ -175,4 +226,8 @@ class MetricsCollector:
                 if self.routing_decisions
                 else 0.0
             ),
+            # Add percentiles to summary
+            "p50_latency_ms": percentiles["p50_latency_ms"],
+            "p95_latency_ms": percentiles["p95_latency_ms"],
+            "p99_latency_ms": percentiles["p99_latency_ms"],
         }

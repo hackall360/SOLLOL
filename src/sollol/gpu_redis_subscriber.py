@@ -103,6 +103,10 @@ class GPURedisSubscriber:
             keys = self.redis_client.keys("sollol:gpu:*")
 
             for key in keys:
+                # Skip the stream key (sollol:gpu:stats) - only process node keys
+                if key == "sollol:gpu:stats":
+                    continue
+
                 # Extract node_id from key
                 node_id = key.replace("sollol:gpu:", "")
 
@@ -113,7 +117,8 @@ class GPURedisSubscriber:
                     self.update_node_gpu_stats(node_id, gpu_stats)
 
         except Exception as e:
-            logger.error(f"Error polling GPU stats from Redis: {e}")
+            # Silently skip errors - GPU monitoring status visible in dashboard
+            logger.debug(f"GPU stats polling issue (not critical): {e}")
 
     def run_loop(self, interval: int = 5):
         """

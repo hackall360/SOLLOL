@@ -5,6 +5,8 @@ Similar to OllamaNodeRegistry but for llama.cpp RPC servers used in model shardi
 """
 
 import logging
+import os
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -114,8 +116,60 @@ class RPCBackendRegistry:
     Similar to OllamaNodeRegistry but for RPC servers.
     """
 
-    def __init__(self):
+    def __init__(self, enable_heartbeat: bool = True):
+        """
+        Initialize RPC backend registry.
+
+        Args:
+            enable_heartbeat: Enable periodic health check heartbeat (default: True, env: SOLLOL_RPC_BACKEND_HEARTBEAT)
+        """
         self.backends: Dict[str, RPCBackend] = {}
+
+        # Heartbeat configuration - load from environment
+        if enable_heartbeat is None:
+            enable_heartbeat = os.getenv("SOLLOL_RPC_BACKEND_HEARTBEAT", "true").lower() in ("true", "1", "yes")
+
+        self.enable_heartbeat = enable_heartbeat
+        self._heartbeat_interval = int(os.getenv("SOLLOL_RPC_BACKEND_HEARTBEAT_INTERVAL", "30"))  # seconds
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_running = False
+
+        if self.enable_heartbeat:
+            self._start_heartbeat()
+
+    def _start_heartbeat(self):
+        """Start periodic health check heartbeat thread."""
+        if self._heartbeat_running:
+            return
+
+        self._heartbeat_running = True
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            daemon=True,
+            name="RPCBackendRegistry-Heartbeat"
+        )
+        self._heartbeat_thread.start()
+        logger.info(f"RPC backend heartbeat started (interval: {self._heartbeat_interval}s)")
+
+    def _heartbeat_loop(self):
+        """Periodic health check loop for all backends."""
+        while self._heartbeat_running:
+            try:
+                time.sleep(self._heartbeat_interval)
+
+                if self.backends:
+                    # Run health check on all backends
+                    self.health_check_all()
+
+            except Exception as e:
+                logger.error(f"RPC backend heartbeat error: {e}")
+
+    def stop_heartbeat(self):
+        """Stop the heartbeat thread."""
+        self._heartbeat_running = False
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            self._heartbeat_thread.join(timeout=2)
+        logger.info("RPC backend heartbeat stopped")
 
     def add_backend(self, host: str, port: int = 50052) -> RPCBackend:
         """

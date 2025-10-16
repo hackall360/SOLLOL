@@ -286,6 +286,10 @@
             <div class="value" id="system-status">●</div>
         </div>
         <div class="status-card">
+            <h3>Active Applications</h3>
+            <div class="value" id="active-apps">-</div>
+        </div>
+        <div class="status-card">
             <h3>Active Hosts</h3>
             <div class="value" id="active-hosts">-<span class="unit">/ -</span></div>
         </div>
@@ -308,6 +312,13 @@
     </div>
 
     <div class="main-grid">
+        <div class="panel full-width">
+            <h2>📱 SOLLOL Applications</h2>
+            <div class="host-list" id="apps-list">
+                <div class="no-data">Waiting for data...</div>
+            </div>
+        </div>
+
         <div class="panel">
             <h2>🖥️ Host Status</h2>
             <div class="host-list" id="host-list">
@@ -347,9 +358,13 @@
 
         async function fetchDashboard() {
             try {
-                const response = await fetch(`${API_BASE}/api/dashboard`);
-                const data = await response.json();
-                updateDashboard(data);
+                const [dashResponse, appsResponse] = await Promise.all([
+                    fetch(`${API_BASE}/api/dashboard`),
+                    fetch(`${API_BASE}/api/applications`)
+                ]);
+                const data = await dashResponse.json();
+                const appsData = await appsResponse.json();
+                updateDashboard(data, appsData);
                 document.getElementById('refresh-status').textContent = `Updated ${new Date().toLocaleTimeString()}`;
             } catch (error) {
                 console.error('Failed to fetch dashboard data:', error);
@@ -357,11 +372,11 @@
             }
         }
 
-        function updateDashboard(data) {
+        function updateDashboard(data, appsData) {
             // System status
             const healthCard = document.getElementById('health-card');
             const statusEl = document.getElementById('system-status');
-            if (data.status.healthy) {
+            if (data.status && data.status.healthy) {
                 healthCard.className = 'status-card healthy';
                 statusEl.textContent = '✓';
                 statusEl.style.color = '#4ade80';
@@ -371,16 +386,51 @@
                 statusEl.style.color = '#f87171';
             }
 
+            // Active Applications
+            if (appsData && appsData.applications) {
+                const activeApps = appsData.applications.filter(app => app.status === 'active').length;
+                document.getElementById('active-apps').textContent = activeApps;
+            }
+
             // Metrics
-            document.getElementById('active-hosts').innerHTML =
-                `${data.status.available_hosts}<span class="unit">/ ${data.status.total_hosts}</span>`;
-            document.getElementById('avg-latency').innerHTML =
-                `${Math.round(data.performance.avg_latency_ms)}<span class="unit">ms</span>`;
-            document.getElementById('success-rate').innerHTML =
-                `${Math.round(data.performance.avg_success_rate * 100)}<span class="unit">%</span>`;
-            document.getElementById('gpu-memory').innerHTML =
-                `${Math.round(data.performance.total_gpu_memory_mb)}<span class="unit">MB</span>`;
-            document.getElementById('ray-workers').textContent = data.status.ray_workers;
+            if (data.status) {
+                document.getElementById('active-hosts').innerHTML =
+                    `${data.status.available_hosts || 0}<span class="unit">/ ${data.status.total_hosts || 0}</span>`;
+                document.getElementById('ray-workers').textContent = data.status.ray_workers || 0;
+            }
+            if (data.performance) {
+                document.getElementById('avg-latency').innerHTML =
+                    `${Math.round(data.performance.avg_latency_ms || 0)}<span class="unit">ms</span>`;
+                document.getElementById('success-rate').innerHTML =
+                    `${Math.round((data.performance.avg_success_rate || 0) * 100)}<span class="unit">%</span>`;
+                document.getElementById('gpu-memory').innerHTML =
+                    `${Math.round(data.performance.total_gpu_memory_mb || 0)}<span class="unit">MB</span>`;
+            }
+
+            // Applications
+            const appsList = document.getElementById('apps-list');
+            if (appsData && appsData.applications && appsData.applications.length > 0) {
+                appsList.innerHTML = appsData.applications.map(app => {
+                    const uptime = Math.floor(app.uptime_seconds);
+                    const hours = Math.floor(uptime / 3600);
+                    const minutes = Math.floor((uptime % 3600) / 60);
+                    const uptimeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                    return `
+                    <div class="host-item ${app.status}">
+                        <div>
+                            <div class="host-name">${app.name}</div>
+                            <div class="host-metrics">
+                                <span>🔧 ${app.router_type}</span>
+                                <span>⏱️ Uptime: ${uptimeStr}</span>
+                                <span>🆔 ${app.app_id.substring(0, 8)}...</span>
+                            </div>
+                        </div>
+                        <div class="host-status ${app.status}">${app.status}</div>
+                    </div>
+                `}).join('');
+            } else {
+                appsList.innerHTML = '<div class="no-data">No applications registered</div>';
+            }
 
             // Hosts
             const hostList = document.getElementById('host-list');
@@ -399,6 +449,8 @@
                         <div class="host-status ${host.status}">${host.status}</div>
                     </div>
                 `).join('');
+            } else {
+                hostList.innerHTML = '<div class="no-data">No hosts available</div>';
             }
 
             // Alerts

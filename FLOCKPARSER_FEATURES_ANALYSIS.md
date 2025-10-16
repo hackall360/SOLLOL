@@ -4,6 +4,8 @@
 
 After comprehensive analysis of FlockParser and SOLLOL codebases, I've identified **3 high-value features** from FlockParser that would significantly enhance SOLLOL. Most features already exist in both projects with near-identical implementations.
 
+**Note:** Much of FlockParser's legacy load balancing code was refactored and became core SOLLOL logic. FlockParser now uses SOLLOL as its load balancer (via direct integration). This analysis compares remaining FlockParser-specific features that could still enhance SOLLOL.
+
 ## Feature Comparison Matrix
 
 | Feature | FlockParser | SOLLOL | Recommendation |

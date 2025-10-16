@@ -366,20 +366,28 @@ class GPUReporter:
             # Add node_id to stats
             stats["node_id"] = self.node_id
 
+            # Flatten stats for Redis stream (xadd requires string values)
+            flat_stats = {}
+            for key, value in stats.items():
+                if isinstance(value, (list, dict)):
+                    flat_stats[key] = json.dumps(value)
+                else:
+                    flat_stats[key] = str(value)
+
             # Publish to Redis stream
             message_id = self.redis_client.xadd(
                 stream_key,
-                stats,
+                flat_stats,
                 maxlen=1000  # Keep last 1000 entries
             )
 
             logger.debug(f"Published GPU stats for {self.node_id}: {message_id}")
 
-            # Also set as key for quick lookup
+            # Also set as key for quick lookup (JSON format for easy retrieval)
             key = f"sollol:gpu:{self.node_id}"
             self.redis_client.setex(
                 key,
-                60,  # Expire after 60s (ensures stale data is removed)
+                120,  # Expire after 120s (2 minutes - prevents stale data, allows for network hiccups)
                 json.dumps(stats)
             )
 

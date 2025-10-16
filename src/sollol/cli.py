@@ -36,6 +36,9 @@ def up(
         None,
         help="Comma-separated Ollama nodes for task distribution (e.g., '192.168.1.20:11434,192.168.1.21:11434'). Auto-discovers if not set.",
     ),
+    setup_gpu_monitoring: bool = typer.Option(True, "--setup-gpu-monitoring/--no-setup-gpu-monitoring", help="Auto-setup GPU monitoring if not running"),
+    redis_host: str = typer.Option("localhost", help="Redis host for GPU monitoring"),
+    redis_port: int = typer.Option(6379, help="Redis port for GPU monitoring"),
 ):
     """
     Start SOLLOL gateway - Intelligent load balancer for Ollama clusters.
@@ -126,6 +129,30 @@ def up(
     logger.info("=" * 70)
     logger.info("")
 
+    # Auto-setup GPU monitoring if enabled
+    if setup_gpu_monitoring:
+        logger.info("🔧 Setting up GPU monitoring...")
+        try:
+            from .gpu_auto_setup import auto_setup_gpu_monitoring
+
+            gpu_setup_success = auto_setup_gpu_monitoring(
+                redis_host=redis_host,
+                redis_port=redis_port,
+                auto_install=True,
+                auto_start=True,
+            )
+
+            if gpu_setup_success:
+                logger.info("✅ GPU monitoring ready")
+            else:
+                logger.warning("⚠️  GPU monitoring setup failed (non-critical)")
+                logger.warning("   You can set it up manually: sollol install-gpu-reporter")
+        except Exception as e:
+            logger.warning(f"⚠️  GPU monitoring setup failed: {e}")
+            logger.warning("   You can set it up manually: sollol install-gpu-reporter")
+
+        logger.info("")
+
     # Start gateway (blocking call)
     start_api(
         port=port,
@@ -161,6 +188,102 @@ def status():
     logger.info("   Gateway: http://localhost:8000/api/health")
     logger.info("   Metrics: http://localhost:9090/metrics")
     logger.info("   Stats: http://localhost:8000/api/stats")
+
+
+@app.command()
+def install_gpu_reporter(
+    redis_host: str = typer.Option("localhost", help="Redis server hostname"),
+    redis_port: int = typer.Option(6379, help="Redis server port"),
+    node_id: Optional[str] = typer.Option(None, help="Node ID (e.g., 10.9.66.90:11434). Auto-detected if not specified."),
+    interval: int = typer.Option(5, help="Reporting interval in seconds"),
+):
+    """
+    Install GPU reporter service for real-time VRAM monitoring.
+
+    This installs a systemd user service that publishes GPU stats to Redis
+    using gpustat (vendor-agnostic: NVIDIA, AMD, Intel).
+
+    Examples:
+        # Auto-detect node ID, use localhost Redis:
+        sollol install-gpu-reporter
+
+        # Specify Redis host:
+        sollol install-gpu-reporter --redis-host 10.9.66.154
+
+        # Full configuration:
+        sollol install-gpu-reporter --redis-host 10.9.66.154 --node-id 10.9.66.90:11434 --interval 5
+    """
+    import subprocess
+    import socket
+    from pathlib import Path
+
+    # Auto-detect node ID if not specified
+    if not node_id:
+        try:
+            # Get primary network interface IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            node_id = f"{local_ip}:11434"
+        except Exception:
+            node_id = "127.0.0.1:11434"
+        logger.info(f"Auto-detected Node ID: {node_id}")
+
+    logger.info("=" * 70)
+    logger.info("🔧 Installing SOLLOL GPU Reporter Service")
+    logger.info("=" * 70)
+    logger.info("")
+    logger.info(f"Configuration:")
+    logger.info(f"  Redis Host: {redis_host}")
+    logger.info(f"  Redis Port: {redis_port}")
+    logger.info(f"  Node ID: {node_id}")
+    logger.info(f"  Interval: {interval}s")
+    logger.info("")
+
+    # Find the installer script
+    sollol_path = Path(__file__).parent.parent.parent
+    installer_script = sollol_path / "scripts" / "install-gpu-reporter-service.sh"
+
+    if not installer_script.exists():
+        logger.error(f"❌ Installer script not found at: {installer_script}")
+        logger.error("   Run from SOLLOL repository directory")
+        raise typer.Exit(1)
+
+    # Run installer with auto-configuration (non-interactive)
+    env = {
+        "REDIS_HOST": redis_host,
+        "REDIS_PORT": str(redis_port),
+        "NODE_ID": node_id,
+        "REPORT_INTERVAL": str(interval),
+    }
+
+    try:
+        # Make script executable
+        installer_script.chmod(0o755)
+
+        # Run with environment variables set (for non-interactive mode)
+        result = subprocess.run(
+            [str(installer_script)],
+            env={**subprocess.os.environ, **env},
+            check=True,
+            capture_output=False,
+        )
+
+        logger.info("")
+        logger.info("=" * 70)
+        logger.info("✅ GPU Reporter service installed!")
+        logger.info("=" * 70)
+        logger.info("")
+        logger.info("Useful commands:")
+        logger.info("  systemctl --user status sollol-gpu-reporter")
+        logger.info("  systemctl --user restart sollol-gpu-reporter")
+        logger.info("  journalctl --user -u sollol-gpu-reporter -f")
+        logger.info("")
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ Installation failed: {e}")
+        raise typer.Exit(1)
 
 
 def main():

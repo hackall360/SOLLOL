@@ -1543,6 +1543,21 @@ UNIFIED_DASHBOARD_HTML = """
             </div>
         </div>
 
+        <!-- SOLLOL System Logs -->
+        <div class="dashboard-panel full-height">
+            <div class="panel-header">
+                <span class="status-indicator status-active"></span>
+                📋 SOLLOL System Logs
+            </div>
+            <div class="panel-content">
+                <div id="sollol-logs" style="padding: 1rem; overflow: auto; height: 100%; font-family: 'Courier New', monospace; font-size: 0.85rem; line-height: 1.4; background: #0f172a;">
+                    <div style="color: #94a3b8; text-align: center; padding: 2rem;">
+                        Connecting to SOLLOL logs stream...
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Ray Dashboard -->
         <div class="dashboard-panel full-height">
             <div class="panel-header">
@@ -1815,7 +1830,8 @@ UNIFIED_DASHBOARD_HTML = """
         let ollamaWs = null;
         let rpcWs = null;
         let routingWs = null;
-        let reconnecting = {ollama: false, rpc: false, routing: false};
+        let sollolLogsWs = null;
+        let reconnecting = {ollama: false, rpc: false, routing: false, sollolLogs: false};
 
         function connectOllama() {
             if (ollamaWs && ollamaWs.readyState === WebSocket.OPEN) return;
@@ -1986,10 +2002,76 @@ UNIFIED_DASHBOARD_HTML = """
             };
         }
 
+        function connectSOLLOLLogs() {
+            if (sollolLogsWs && sollolLogsWs.readyState === WebSocket.OPEN) return;
+            if (reconnecting.sollolLogs) return;
+
+            const sollolLogs = document.getElementById('sollol-logs');
+
+            if (sollolLogsWs) {
+                try { sollolLogsWs.close(); } catch(e) {}
+            }
+
+            sollolLogsWs = new WebSocket(`${wsProtocol}//${wsHost}/ws/logs`);
+
+            sollolLogsWs.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (sollolLogs.querySelector('div[style*="text-align: center"]')) {
+                        sollolLogs.innerHTML = '';
+                    }
+                    const entry = document.createElement('div');
+                    entry.style.padding = '0.25rem 0';
+                    entry.style.borderBottom = '1px solid #1e293b';
+                    entry.style.fontSize = '0.875rem';
+
+                    // Color code by log level
+                    const level = data.level || 'INFO';
+                    if (level === 'ERROR') {
+                        entry.style.color = '#ef4444';
+                    } else if (level === 'WARNING') {
+                        entry.style.color = '#f59e0b';
+                    } else if (level === 'INFO') {
+                        entry.style.color = '#10b981';
+                    } else {
+                        entry.style.color = '#94a3b8';
+                    }
+
+                    const message = data.message || event.data;
+                    entry.textContent = message;
+                    sollolLogs.appendChild(entry);
+                    sollolLogs.scrollTop = sollolLogs.scrollHeight;
+
+                    // Keep only last 100 entries
+                    while (sollolLogs.children.length > 100) {
+                        sollolLogs.removeChild(sollolLogs.firstChild);
+                    }
+                } catch(e) {
+                    console.error('Failed to parse SOLLOL logs WebSocket message:', e);
+                }
+            };
+
+            sollolLogsWs.onerror = () => {
+                sollolLogs.innerHTML = '<div style="color: #ef4444; padding: 0.5rem;">✗ Connection error</div>';
+            };
+
+            sollolLogsWs.onclose = () => {
+                if (!reconnecting.sollolLogs) {
+                    reconnecting.sollolLogs = true;
+                    setTimeout(() => {
+                        sollolLogs.innerHTML = '<div style="color: #f59e0b; padding: 0.5rem;">⟳ Reconnecting...</div>';
+                        reconnecting.sollolLogs = false;
+                        connectSOLLOLLogs();
+                    }, 5000);
+                }
+            };
+        }
+
         // Connect all WebSockets on page load
         connectOllama();
         connectRPC();
         connectRouting();
+        connectSOLLOLLogs();
     </script>
 </body>
 </html>

@@ -1,5 +1,54 @@
 # Known Issues
 
+## ~~Dashboard Double Registration Bug~~ (SOLVED in v0.9.50)
+
+**Issue**: Applications using `OllamaPool(register_with_dashboard=False)` and then manually creating a `DashboardClient` would appear twice in the dashboard applications list.
+
+**Root Cause**: The `register_with_dashboard=False` parameter was ignored in `pool.py:310`. OllamaPool called `_auto_register_with_dashboard()` unconditionally during initialization, regardless of the flag value.
+
+**Example of Affected Code**:
+```python
+# User creates pool with registration disabled
+pool = OllamaPool(
+    nodes=["http://10.9.66.48:11434"],
+    register_with_dashboard=False  # Intending to register manually later
+)
+
+# Later, user manually registers with dashboard
+from sollol.dashboard_client import DashboardClient
+pool._dashboard_client = DashboardClient(
+    app_name="MyApp",
+    router_type="OllamaPool",
+    auto_register=True
+)
+
+# Result: Pool auto-registered anyway (bug) + manual registration = 2 entries
+```
+
+**Solution** (Implemented in v0.9.50):
+Added conditional check in `pool.py:310` to respect the `register_with_dashboard` flag:
+
+```python
+# Before (buggy):
+self._auto_register_with_dashboard()
+
+# After (fixed):
+if self.register_with_dashboard:
+    self._auto_register_with_dashboard()
+```
+
+**Workaround for v0.9.49 and earlier**:
+If using older versions, manually unregister duplicate entries:
+```bash
+curl -X POST http://localhost:8080/api/applications/unregister \
+  -H "Content-Type: application/json" \
+  -d '{"app_id": "duplicate-app-id-here"}'
+```
+
+**Status**: ✅ RESOLVED - Fixed in v0.9.50 (source) and v0.9.50 (PyPI).
+
+---
+
 ## ~~Dask Worker Logging Warnings~~ (SOLVED in v0.9.18)
 
 **Issue**: When the UnifiedDashboard was initialized with `enable_dask=True`, Dask worker processes generated verbose "Task queue depth" warnings that spammed CLI output after clicking the dashboard link.

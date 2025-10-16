@@ -636,7 +636,8 @@ class HybridRouter:
             return False
 
         # CRITICAL FIX: Check ACTUAL current VRAM on all nodes
-        # If all GPUs are overwhelmed (<2000MB), route to RPC instead of CPU fallback
+        # Only route to RPC if model is LARGE and all GPUs are overwhelmed
+        # For small models, it's better to wait for GPU than use RPC
         stats = self.ollama_pool.get_stats()
         node_performance = stats.get("node_performance", {})
 
@@ -654,10 +655,18 @@ class HybridRouter:
                 )
 
                 if all_gpus_overwhelmed:
-                    logger.warning(
-                        f"⚠️  All Ollama GPUs overwhelmed (VRAM < 2000MB) - routing to RPC sharding"
-                    )
-                    return False
+                    # Only route large models to RPC when GPUs are overwhelmed
+                    # Small models should wait for GPU (RPC would be slower)
+                    profile = self._get_model_profile(model)
+                    if profile.estimated_memory_gb > 30:  # Large models (70B+)
+                        logger.warning(
+                            f"⚠️  All GPUs overwhelmed + large model ({profile.estimated_memory_gb:.1f}GB) - routing to RPC sharding"
+                        )
+                        return False
+                    else:
+                        logger.info(
+                            f"ℹ️  All GPUs overwhelmed but model is small ({profile.estimated_memory_gb:.1f}GB) - will wait for GPU"
+                        )
 
         # Get model size estimate
         profile = self._get_model_profile(model)

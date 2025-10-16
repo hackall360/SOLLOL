@@ -19,6 +19,7 @@ We manage starting the coordinator and intelligently selecting healthy RPC backe
 
 import asyncio
 import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -107,9 +108,9 @@ class LlamaCppCoordinator:
         self.process: Optional[subprocess.Popen] = None
         self.http_client = httpx.AsyncClient(timeout=300.0)
 
-        # Heartbeat for live monitoring
+        # Heartbeat for live monitoring - configurable via environment variable
         self._heartbeat_task: Optional[asyncio.Task] = None
-        self._heartbeat_interval = 30  # seconds
+        self._heartbeat_interval = int(os.getenv("SOLLOL_RPC_HEARTBEAT_INTERVAL", "30"))  # seconds
 
     def _get_healthy_backends(self) -> List[RPCBackend]:
         """

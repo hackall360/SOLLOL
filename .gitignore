@@ -34,3 +34,6 @@ htmlcov/
 # Temporary
 *.tmp
 SynapticLlamas/
+
+# Internal documentation
+GITHUB_POSTING_GUIDELINES.md

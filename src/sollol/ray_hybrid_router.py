@@ -197,7 +197,7 @@ class RayHybridRouter:
             model_vram_threshold_mb: VRAM threshold for Ollama vs RPC routing (16GB default)
             auto_fallback: Fallback to RPC if Ollama fails
         """
-        self.ollama_pool = ollama_pool or OllamaPool.auto_configure()
+        # Store parameters first
         self.enable_distributed = enable_distributed
         self.auto_fallback = auto_fallback
         self.model_vram_threshold_mb = model_vram_threshold_mb
@@ -205,7 +205,7 @@ class RayHybridRouter:
         self.coordinator_base_port = coordinator_base_port
         self.backends_per_pool = backends_per_pool
 
-        # Auto-discover RPC backends if needed
+        # Auto-discover RPC backends if needed (BEFORE ollama_pool initialization)
         if rpc_backends is None and enable_distributed and auto_discover_rpc:
             logger.info("🔍 Auto-discovering RPC backends...")
             from sollol.rpc_discovery import auto_discover_rpc_backends
@@ -216,6 +216,18 @@ class RayHybridRouter:
 
         self.rpc_backends = rpc_backends or []
         self.has_rpc_backends = len(self.rpc_backends) > 0
+
+        # Initialize ollama_pool AFTER we know about RPC backends
+        # Only auto-configure if distributed enabled AND no RPC backends
+        # (If RPC backends exist, we use them for large models instead)
+        if ollama_pool is None:
+            self.ollama_pool = OllamaPool.auto_configure() if (enable_distributed and not self.has_rpc_backends) else None
+            if self.ollama_pool:
+                logger.info("✅ Auto-configured Ollama pool (no RPC backends found)")
+            else:
+                logger.info("⏭️  Ollama pool disabled (using RPC backends for inference)")
+        else:
+            self.ollama_pool = ollama_pool
 
         # Log SOLLOL version at initialization
         from sollol import __version__
@@ -371,10 +383,12 @@ class RayHybridRouter:
         route_to_rpc = self._should_use_rpc(model)
 
         if route_to_rpc and self.enable_distributed and self.pools:
-            # Use Ray-managed sharded pools
+            # Large model → Use Ray-managed sharded pools
+            logger.info(f"Routing {model} to RPC sharding (estimated large model)")
             return await self._route_to_ray_pool(model, messages, stream, **kwargs)
-        else:
-            # Use Ollama pool for small models
+        elif self.ollama_pool:
+            # Small model → Use Ollama pool for task distribution
+            logger.info(f"Routing {model} to Ollama pool (estimated small model)")
             try:
                 return await self.ollama_pool.chat_async(
                     model=model,
@@ -389,6 +403,15 @@ class RayHybridRouter:
                     )
                     return await self._route_to_ray_pool(model, messages, stream, **kwargs)
                 raise
+        elif self.enable_distributed and self.pools:
+            # No Ollama pool but have RPC → Force RPC routing
+            logger.info(f"Routing {model} to RPC sharding (no Ollama pool available)")
+            return await self._route_to_ray_pool(model, messages, stream, **kwargs)
+        else:
+            raise RuntimeError(
+                f"Cannot route request for {model}: No Ollama pool and no RPC backends available. "
+                "Configure either Ollama nodes or RPC backends."
+            )
 
     async def _route_to_ray_pool(
         self,
@@ -419,8 +442,9 @@ class RayHybridRouter:
                 for pool in self.pools
             ]
             # Use ray.get directly in gather (it's async-compatible)
+            # Increased timeout to 300s for large model sharding (70B+ models take time to distribute)
             results = await asyncio.gather(*[
-                asyncio.to_thread(ray.get, task, timeout=60)
+                asyncio.to_thread(ray.get, task, timeout=300)
                 for task in load_tasks
             ])
 
@@ -480,14 +504,14 @@ class RayHybridRouter:
         stats = {
             "router_type": "ray_hybrid",
             "ollama_pool": {
-                "nodes": len(self.ollama_pool.nodes),
-                "requests": self.ollama_pool.stats["total_requests"],
-            },
+                "nodes": len(self.ollama_pool.nodes) if self.ollama_pool else 0,
+                "requests": self.ollama_pool.stats["total_requests"] if self.ollama_pool else 0,
+            } if self.ollama_pool else None,
             "ray_pools": {
-                "num_pools": len(self.pools),
+                "num_pools": len(self.pools) if hasattr(self, 'pools') else 0,
                 "backends_per_pool": self.backends_per_pool,
                 "total_backends": len(self.rpc_backends),
-                "current_model": self.current_model,
+                "current_model": self.current_model if hasattr(self, 'current_model') else None,
             },
         }
 

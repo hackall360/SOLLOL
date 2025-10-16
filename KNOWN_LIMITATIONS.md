@@ -356,28 +356,209 @@ App 3 → SOLLOL Instance 3 → Ollama Nodes
 
 ## Other Known Limitations
 
-### 2. Single-Machine Benchmarking Can't Prove Performance Gains
+### 2. Routing Strategy Hardcoded to Performance-Based
 
-**Problem:** Running Docker containers on one machine shares resources
-**Impact:** Can't validate intelligent routing improvements
-**Solution:** Need multi-node physical cluster
-**Status:** Documented in BENCHMARKING.md
+**Problem:**
 
-### 3. Priority Queue is Async-Only
+The intelligent router currently uses a **hardcoded performance-based routing strategy**. While this strategy is sophisticated (combining latency, success rate, VRAM availability, active load, and model warmth), users cannot select alternative routing policies.
+
+**What's missing:**
+
+```python
+# What users CANNOT do today:
+router = IntelligentRouter(strategy="round_robin")      # ❌ Not supported
+router = IntelligentRouter(strategy="least_loaded")     # ❌ Not supported
+router = IntelligentRouter(strategy="fairness")         # ❌ Not supported
+router = IntelligentRouter(strategy="random")           # ❌ Not supported
+
+# What users CAN do today:
+router = IntelligentRouter()  # ✅ Always performance-based strategy
+```
+
+**Available routing strategies in other systems (like Hydra-Dev):**
+- `round_robin` - Even distribution across nodes
+- `least_loaded` - Route to least busy node
+- `task_aware` - Route based on task type specialization
+- `fastest_response` - Route to lowest latency node
+- `random` - Random selection (baseline for testing)
+
+**Why it's hardcoded:**
+
+The current performance-based strategy was designed for **demonstration purposes** to showcase intelligent routing capabilities. It combines multiple signals into a single scoring function that works well for most use cases.
+
+**Design decision:**
+
+Rather than prematurely abstracting routing strategies, SOLLOL focused on implementing **one excellent strategy** with rich signals:
+- VRAM-aware GPU routing
+- Active request load balancing
+- Model warmth tracking (avoids cold loads)
+- Task type detection
+- Priority-aware scoring
+- Success rate + latency optimization
+
+**Future design:**
+
+Future versions will expose user-selectable routing policies through:
+
+1. **Strategy parameter:**
+   ```python
+   router = IntelligentRouter(strategy="performance_based")  # Default
+   router = IntelligentRouter(strategy="fairness")           # Even distribution
+   router = IntelligentRouter(strategy="latency_optimized")  # Min latency
+   ```
+
+2. **NodeRegistry configuration:**
+   ```yaml
+   # registry_config.yaml
+   routing:
+     strategy: fairness
+     fallback: performance_based
+   ```
+
+3. **Per-request override:**
+   ```python
+   pool.chat(model, messages, routing_hint="least_loaded")
+   ```
+
+**Workaround:**
+
+For now, to change routing behavior, you can:
+
+1. **Modify node priorities:**
+   ```python
+   registry.add_node("http://node1:11434", priority=0)  # High priority
+   registry.add_node("http://node2:11434", priority=10) # Low priority
+   ```
+
+2. **Manually partition nodes:**
+   ```python
+   # Use specific subset of nodes
+   pool = OllamaPool(nodes=[node1, node2])  # Ignores other nodes
+   ```
+
+3. **Disable intelligent routing:**
+   ```python
+   pool = OllamaPool(enable_intelligent_routing=False)  # Falls back to round-robin
+   ```
+
+**Impact:**
+
+- ✅ Current strategy works well for most use cases
+- ⚠️ Cannot optimize for specific workload patterns (fairness, latency-only, etc.)
+- ⚠️ Cannot A/B test different routing strategies
+- ⚠️ Cannot satisfy compliance requirements (e.g., "must distribute evenly for auditing")
+
+**Status:** Documented as future work. Implementation effort: ~1-2 weeks.
+
+---
+
+### 3. Single-Machine Benchmarking Limitations
+
+**Note:** This is NOT a limitation - single machine benchmarks **can** establish baseline performance and validate routing logic.
+
+**What single-machine benchmarks CAN do:**
+- ✅ Establish baseline latency/throughput for reference
+- ✅ Test routing strategy logic and fairness
+- ✅ Validate failover behavior
+- ✅ Measure overhead of intelligent routing vs round-robin
+- ✅ Test priority queue and load distribution
+
+**What they CANNOT do:**
+- ⚠️ Measure true network latency impact (containers share localhost)
+- ⚠️ Validate cross-datacenter routing decisions
+- ⚠️ Test real-world network failures (packet loss, jitter)
+- ⚠️ Measure NUMA effects on multi-socket systems
+
+**Bottom line:** Single-machine benchmarks are **valid and useful** for most testing scenarios. They become limiting only when testing network-specific features or datacenter-scale deployments.
+
+### 4. No Streaming Stall Detection
+
+**Problem:**
+
+SOLLOL supports streaming responses but doesn't detect when a stream **stalls mid-generation** (no new tokens for extended period).
+
+**What's missing:**
+
+```python
+# Hydra-Dev has this:
+stall_timeout = 30  # seconds
+last_response_time = time.time()
+
+async for chunk in stream:
+    if time.time() - last_response_time > stall_timeout:
+        logger.warning(f"Stream stalled for {stall_timeout}s, aborting")
+        break
+
+    last_response_time = time.time()
+    yield chunk
+
+# SOLLOL only has this:
+response = session.post(url, json=data, timeout=300)  # Global timeout
+# ❌ No detection of mid-stream stalls
+```
+
+**Why it matters:**
+
+Streaming can stall due to:
+- VRAM exhaustion (model swapping)
+- Network issues (TCP retransmission)
+- Ollama backend hangs
+- Model context overflow
+
+Without stall detection, clients wait indefinitely for the next token, wasting resources.
+
+**Current behavior:**
+
+SOLLOL relies on global HTTP timeout (300s default). If a stream starts successfully but stalls after generating 10 tokens, the client waits the full 300s before timing out.
+
+**Impact:**
+
+- ⚠️ Long hangs on stalled streams
+- ⚠️ Poor user experience (no early failure detection)
+- ⚠️ Wasted connection resources
+
+**Workaround:**
+
+Set aggressive timeout:
+```python
+pool.chat(model, messages, stream=True, timeout=30)  # Global timeout
+```
+
+**Future implementation:**
+
+```python
+# In pool.py _make_streaming_request()
+STALL_TIMEOUT = 30  # seconds
+last_chunk_time = time.time()
+
+for line in response.iter_lines():
+    if time.time() - last_chunk_time > STALL_TIMEOUT:
+        logger.warning(f"⚠️  Stream stalled for {STALL_TIMEOUT}s, aborting")
+        raise TimeoutError(f"Stream stalled after {STALL_TIMEOUT}s")
+
+    last_chunk_time = time.time()
+    yield chunk
+```
+
+**Status:** Easy to implement. Implementation effort: ~1 day.
+
+---
+
+### 5. Priority Queue is Async-Only
 
 **Problem:** Synchronous API can't use priority queue features
 **Impact:** Sync wrapper bypasses queue
 **Solution:** Need thread-safe sync queue implementation
 **Status:** Works around with blocking HTTP calls
 
-### 4. No Request Migration
+### 6. No Request Migration
 
 **Problem:** Once routed, request can't move to different node
 **Impact:** Sticky to initially-selected node even if better option appears
 **Solution:** Implement request cancellation + re-routing
 **Status:** Would require significant refactoring
 
-### 5. Learning is Per-Instance, Not Cluster-Wide
+### 7. Learning is Per-Instance, Not Cluster-Wide
 
 **Problem:** Performance history not shared between instances
 **Impact:** Each instance learns independently, redundant data

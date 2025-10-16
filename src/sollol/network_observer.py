@@ -15,6 +15,7 @@ Features:
 
 import json
 import logging
+import os
 import queue
 import random
 import threading
@@ -97,20 +98,30 @@ class NetworkObserver:
 
     def __init__(
         self,
-        max_events: int = 10000,
-        redis_url: str = "redis://localhost:6379",
-        enable_sampling: bool = True,
-        sample_rate: float = 0.1
+        max_events: int = None,
+        redis_url: str = None,
+        enable_sampling: bool = None,
+        sample_rate: float = None
     ):
         """
         Initialize network observer.
 
         Args:
-            max_events: Maximum events to keep in memory
-            redis_url: Redis connection URL for dashboard pub/sub
-            enable_sampling: Enable sampling to reduce overhead (default: True)
-            sample_rate: Fraction of info events to log (0.0-1.0, default: 0.1 = 10%)
+            max_events: Maximum events to keep in memory (default: 10000, env: SOLLOL_OBSERVER_MAX_EVENTS)
+            redis_url: Redis connection URL for dashboard pub/sub (default: redis://localhost:6379, env: SOLLOL_REDIS_URL)
+            enable_sampling: Enable sampling to reduce overhead (default: True, env: SOLLOL_OBSERVER_SAMPLING)
+            sample_rate: Fraction of info events to log (0.0-1.0, default: 0.1 = 10%, env: SOLLOL_OBSERVER_SAMPLE_RATE)
         """
+        # Load from environment variables if not provided
+        if max_events is None:
+            max_events = int(os.getenv("SOLLOL_OBSERVER_MAX_EVENTS", "10000"))
+        if redis_url is None:
+            redis_url = os.getenv("SOLLOL_REDIS_URL", "redis://localhost:6379")
+        if enable_sampling is None:
+            enable_sampling = os.getenv("SOLLOL_OBSERVER_SAMPLING", "true").lower() in ("true", "1", "yes")
+        if sample_rate is None:
+            sample_rate = float(os.getenv("SOLLOL_OBSERVER_SAMPLE_RATE", "0.1"))
+
         self.max_events = max_events
         self.events: deque[NetworkEvent] = deque(maxlen=max_events)
         self.event_queue: queue.Queue = queue.Queue()
