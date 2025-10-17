@@ -50,6 +50,7 @@ def run_demo(
     gateway_port: int = DEFAULT_GATEWAY_PORT,
     mock_port: int = DEFAULT_MOCK_OLLAMA_PORT,
     host: str = "127.0.0.1",
+    readiness_timeout: float = 30.0,
 ) -> DemoResult:
     """Run the mock Ollama + SOLLOL gateway demo and return captured responses."""
 
@@ -66,10 +67,12 @@ def run_demo(
         kwargs={"argv": ["--host", host, "--port", str(mock_port)]},
         name="mock_ollama",
         readiness_check=_mock_readiness_check,
+        readiness_timeout=readiness_timeout,
     ):
         with launch_gateway(
             gateway_port=gateway_port,
             mock_port=mock_port,
+            readiness_timeout=readiness_timeout,
         ):
             poll_endpoint(f"{gateway_base_url}/api/health")
             responses = client.run_full_sequence(gateway_base_url)
