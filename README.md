@@ -781,6 +781,53 @@ embeddings = pool.embed(model="nomic-embed-text", input=[...])
 # 5. Restores Node A when healthy
 ```
 
+#### **Simulate Failure & Recovery**
+
+Want to see SOLLOL's automatic failover in action? Run the included simulation:
+
+```bash
+python test_failure_recovery.py
+```
+
+**What the simulation does:**
+1. Starts 3 mock Ollama nodes
+2. Sends baseline requests (all nodes healthy)
+3. **Kills node #1 mid-execution**
+4. Continues sending requests (SOLLOL routes around failed node)
+5. Restores node #1
+6. Resumes sending requests (traffic returns to recovered node)
+
+**Expected output:**
+```
+STEP 1: Starting Mock Nodes
+✅ Started 3 mock nodes
+
+BASELINE: Requests with all nodes healthy
+  Request 1: ✓ Routed to localhost:21434
+  Request 2: ✓ Routed to localhost:21435
+  ...
+
+STEP 3: Simulating Node Failure (killing node 0)
+Killing node on port 21434...
+✅ Node 21434 terminated
+
+STEP 4: Requests after node failure (observe failover)
+  Request 1: ✓ Routed to localhost:21435  ← Automatically avoided dead node
+  Request 2: ✓ Routed to localhost:21436
+  ...
+
+STEP 5: Simulating Node Recovery
+✅ Node 21434 recovered successfully
+
+✅ Key Observations:
+  1. Requests succeeded even after node failure
+  2. SOLLOL automatically routed around the dead node
+  3. Node recovered and rejoined the pool
+  4. Traffic resumed to recovered node
+```
+
+This demonstrates SOLLOL's production-grade resilience without needing real infrastructure.
+
 ---
 
 ## 📊 Performance & Benchmarks
