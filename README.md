@@ -1124,13 +1124,101 @@ curl http://localhost:9090/metrics
 
 ## 🔌 Integration Examples
 
-### Production Integrations
+### 🔗 Integration with SynapticLlamas & FlockParser
+
+SOLLOL is the **distributed inference platform** for the complete AI ecosystem, powering both **[SynapticLlamas](https://github.com/BenevolentJoker-JohnL/SynapticLlamas)** (multi-agent orchestration) and **[FlockParser](https://github.com/BenevolentJoker-JohnL/FlockParser)** (document RAG).
+
+### **The Complete Stack**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              SynapticLlamas (v0.1.0+)                       │
+│          Multi-Agent System & Orchestration                 │
+│  • Research agents  • Editor agents  • Storyteller agents  │
+└───────────┬────────────────────────────────────┬───────────┘
+            │                                    │
+            │ RAG Queries                        │ Distributed
+            │ (with pre-computed embeddings)     │ Inference
+            │                                    │
+     ┌──────▼──────────┐              ┌─────────▼────────────┐
+     │  FlockParser    │              │      SOLLOL          │
+     │  API (v1.0.4+)  │              │  Load Balancer       │
+     │  Port: 8000     │              │  (v0.9.31+)          │
+     └─────────────────┘              └──────────────────────┘
+            │                                    │
+            │ ChromaDB                          │ Intelligent
+            │ Vector Store                      │ GPU/CPU Routing
+            │                                    │
+     ┌──────▼──────────┐              ┌─────────▼────────────┐
+     │  Knowledge Base │              │  Ollama Nodes        │
+     │  41 Documents   │              │  (Distributed)       │
+     │  6,141 Chunks   │              │  GPU + CPU           │
+     └─────────────────┘              └──────────────────────┘
+```
+
+### **Why This Integration Matters**
+
+| Component | Role | Key Feature |
+|-----------|------|-------------|
+| **SOLLOL** | Distributed Inference | Intelligent GPU/CPU routing with load balancing |
+| **SynapticLlamas** | Multi-Agent Orchestration | Research, Editor, Storyteller agents |
+| **FlockParser** | Document RAG & Knowledge Base | ChromaDB vector store with 6,141+ chunks |
+
+### **Quick Start: Complete Ecosystem**
+
+```bash
+# Install all three packages (auto-installs dependencies)
+pip install synaptic-llamas  # Pulls in flockparser>=1.0.4 and sollol>=0.9.31
+
+# Start FlockParser API
+flockparse
+
+# Run SynapticLlamas with SOLLOL + FlockParser integration
+synaptic-llamas --interactive --distributed
+```
+
+### **Integration Example: Load Balanced RAG**
+
+```python
+from sollol import OllamaPool
+from flockparser_adapter import FlockParserAdapter
+
+# Initialize SOLLOL for distributed inference
+sollol = OllamaPool.auto_configure()
+
+# Initialize FlockParser adapter
+flockparser = FlockParserAdapter("http://localhost:8000", remote_mode=True)
+
+# Step 1: Generate embedding using SOLLOL (load balanced!)
+user_query = "What does research say about quantum entanglement?"
+embedding = sollol.embed(
+    model="mxbai-embed-large",
+    input=user_query
+)
+# SOLLOL routes to fastest GPU automatically
+
+# Step 2: Query FlockParser with pre-computed embedding
+rag_results = flockparser.query_remote(
+    query=user_query,
+    embedding=embedding,  # Skip FlockParser's embedding generation
+    n_results=5
+)
+# FlockParser returns relevant chunks from 41 documents
+
+# Performance gain: 2-5x faster when SOLLOL has faster nodes!
+```
+
+### **Production Integrations**
 
 **SOLLOL is actively used in production by:**
 
-- **[FlockParser](https://github.com/BenevolentJoker-JohnL/FlockParser)** - PDF document processing with RAG capabilities. FlockParser's legacy load balancing code was refactored and became core SOLLOL logic. FlockParser now uses SOLLOL directly via `OllamaPool` for intelligent routing across document embeddings and LLM queries.
+- **[FlockParser](https://github.com/BenevolentJoker-JohnL/FlockParser)** - Document RAG Intelligence with distributed processing. FlockParser's legacy load balancing code was refactored and became core SOLLOL logic. FlockParser now uses SOLLOL directly via `OllamaPool` for intelligent routing across document embeddings and LLM queries.
 
-- **[SynapticLlamas](https://github.com/BenevolentJoker-JohnL/SynapticLlamas)** - Multi-agent collaborative research framework. Uses SOLLOL's `HybridRouter` for distributed agent execution with RAG-enhanced research capabilities.
+- **[SynapticLlamas](https://github.com/BenevolentJoker-JohnL/SynapticLlamas)** - Multi-agent collaborative research framework. Uses SOLLOL's `HybridRouter` for distributed agent execution with RAG-enhanced research capabilities via FlockParser integration.
+
+**Related Projects:**
+- **[SynapticLlamas](https://github.com/BenevolentJoker-JohnL/SynapticLlamas)** - Multi-Agent Orchestration
+- **[FlockParser](https://github.com/BenevolentJoker-JohnL/FlockParser)** - Document RAG Intelligence
 
 ---
 
