@@ -1722,10 +1722,12 @@ embeddings = results.json()["results"]
 
 ## ⚡ Performance Optimizations (v0.9.18+)
 
-SOLLOL now includes **8 production-grade performance optimizations** that deliver significant throughput and latency improvements:
+SOLLOL now includes **8 production-grade performance optimizations** designed to improve throughput and latency:
+
+**⚠️ Transparency Note:** These features are implemented and functional, but claimed performance improvements are projections based on architecture, NOT independently validated benchmarks. See [Performance Impact](#-performance-impact) section below for details.
 
 ### 🚀 Response Caching Layer
-**Impact:** Reduces latency for repeated queries
+**Expected Impact:** Reduces latency for repeated queries (cache hit/miss tracking validated)
 
 Intelligent LRU cache with TTL expiration:
 ```python
@@ -1757,7 +1759,7 @@ print(f"Cache size: {stats['size']}")           # 234/1000
 ```
 
 ### 🌊 Streaming Support
-**Impact:** Better UX, reduced perceived latency
+**Expected Impact:** Better UX, reduced perceived latency (streaming functionality validated)
 
 Token-by-token streaming for `chat()` and `generate()`:
 ```python
@@ -1780,7 +1782,7 @@ for chunk in pool.generate(
 ```
 
 ### 🔥 Smart Model Prefetching
-**Impact:** 1-5 seconds reduced first-request latency
+**Expected Impact:** 1-5 seconds reduced first-request latency (projection, not measured)
 
 Pre-load models into VRAM before first use:
 ```python
@@ -1796,7 +1798,7 @@ print(f"Warmed {sum(results.values())} models")
 ```
 
 ### ⚡ Async I/O Support
-**Impact:** 2-3x throughput for concurrent requests
+**Expected Impact:** 2-3x throughput for concurrent requests (projection, not measured)
 
 True non-blocking I/O with httpx AsyncClient:
 ```python
@@ -1816,7 +1818,7 @@ results = asyncio.run(process_batch())
 ```
 
 ### 🔗 HTTP/2 Multiplexing
-**Impact:** 30-50% latency reduction for concurrent requests
+**Expected Impact:** 30-50% latency reduction for concurrent requests (projection, not measured)
 
 Automatic HTTP/2 support when `httpx` is installed:
 ```python
@@ -1849,10 +1851,29 @@ print(f"HTTP/2 enabled: {stats['http2_enabled']}")  # True
 
 ### 📈 Performance Impact
 
-**Estimated improvements:**
-- **Throughput:** +150-300% for concurrent workloads
-- **Latency:** -40-70% for typical requests
-- **Cache hits:** Significant latency reduction for repeated queries
+**⚠️ IMPORTANT: These are architectural projections, NOT measured results**
+
+These optimizations are implemented and functional, but multi-node performance gains have not been independently validated:
+
+**Projected improvements (unvalidated):**
+- **Throughput:** +150-300% for concurrent workloads (theory: parallel request handling)
+- **Latency:** -40-70% for typical requests (theory: caching + HTTP/2)
+- **Cache hits:** Significant latency reduction for repeated queries (validated in single-node tests)
+
+**What's actually measured:**
+- ✅ Response caching works (cache hit/miss rates tracked)
+- ✅ Streaming works (token-by-token delivery confirmed)
+- ✅ HTTP/2 enabled (httpx connection verified)
+- ⚠️ Multi-node throughput gains: Not independently benchmarked
+
+**To validate these claims yourself:**
+```bash
+# Run comparative benchmarks
+cd benchmarks
+python run_benchmarks.py --sollol-url http://localhost:8000 --duration 120
+```
+
+See [BENCHMARKING.md](BENCHMARKING.md) for methodology.
 
 ---
 
