@@ -8,15 +8,61 @@ The gateway mock cluster example illustrates how to spin up a miniature SOLLOL d
 - (Optional) Local Ollama runtimes or lightweight HTTP mocks that respond like Ollama nodes for realism.
 - Redis server available when testing GPU monitoring flows (defaults to `localhost:6379`).
 
-## Highlighted CLI Parameters
-The demo concentrates on the `sollol up` command defined in `src/sollol/cli.py` and calls out a handful of flags that determine cluster behavior:
+## Quickstart Script
 
-- `--port`: Gateway listening port (defaults to `11434`, Ollama-compatible). Use this when simulating multiple gateways on one machine.
-- `--ray-workers`: Number of Ray actors that fan out real-time requests across the mock cluster.
-- `--dask-workers`: Number of Dask workers powering batch workloads. Pair with `--no-batch-processing` to study latency without batch overhead.
-- `--rpc-backends`: Comma-separated llama.cpp RPC servers for sharded models. Helpful for illustrating hybrid RPC + Ollama routing.
-- `--ollama-nodes`: Comma-separated Ollama (or mock) HTTP endpoints to balance across.
-- `--setup-gpu-monitoring/--no-setup-gpu-monitoring`, `--redis-host`, `--redis-port`: Control the optional GPU monitoring bootstrap so you can evaluate telemetry collection.
+An executable helper, [`run.sh`](./run.sh), orchestrates the full loop: it spawns the mock Ollama server, launches the SOLLOL gateway, runs the validation client, and then shuts everything down cleanly. From the repository root run:
+
+```bash
+./examples/gateway_mock_cluster/run.sh
+```
+
+Environment variables map to the CLI flags exposed by `python -m examples.gateway_mock_cluster run`:
+
+| Environment variable | Description | Default |
+| --- | --- | --- |
+| `GATEWAY_PORT` | Gateway listener forwarded to `--gateway-port`. | 18000 |
+| `MOCK_PORT` | Mock Ollama listener forwarded to `--mock-port`. | 11434 |
+| `HOST` | Hostname passed via `--host`. | `127.0.0.1` |
+| `READINESS_TIMEOUT` | Seconds supplied to `--readiness-timeout`. | 30 |
+| `VERBOSE` | When set to `1`, `true`, `yes`, or `on`, adds `--verbose`. | unset |
+
+If you are running inside a restricted container, consider exporting `SOLLOL_DASK_WORKERS=0` before invoking the script to disable optional Dask batch workers that may not be able to fork child processes.
+
+The script prints the formatted payload summaries emitted by `client.format_results`. Abridged output looks like:
+
+```
+HEALTH
+{
+  "service": "SOLLOL",
+  "status": "healthy",
+  "ray_parallel_execution": {
+    "actors": 2,
+    "enabled": true,
+    "description": "Ray actors for concurrent request handling"
+  },
+  "task_distribution": {
+    "enabled": true,
+    "ollama_nodes": 1,
+    "description": "Load balance across Ollama nodes"
+  },
+  ...
+}
+
+CHAT
+{
+  "message": {
+    "content": "ready",
+    "role": "assistant"
+  },
+  "model": "llama3.2"
+}
+
+GENERATE
+{
+  "response": "Status: ready.",
+  "model": "llama3.2"
+}
+```
 
 ## Manual Run Outline
 1. **Prepare environment**
