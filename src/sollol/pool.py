@@ -45,6 +45,7 @@ from .network_observer import (
     log_node_status_change,
 )
 from .routing_logger import get_routing_logger
+from .routing_strategy import RoutingStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,7 @@ class OllamaPool:
         self,
         nodes: Optional[List[Dict[str, str]]] = None,
         enable_intelligent_routing: bool = True,
+        routing_strategy: RoutingStrategy = RoutingStrategy.INTELLIGENT,
         exclude_localhost: bool = False,
         discover_all_nodes: bool = False,
         app_name: Optional[str] = None,
@@ -118,7 +120,8 @@ class OllamaPool:
 
         Args:
             nodes: List of node dicts. If None, auto-discovers.
-            enable_intelligent_routing: Use intelligent routing (default: True)
+            enable_intelligent_routing: Use intelligent routing (default: True, deprecated - use routing_strategy instead)
+            routing_strategy: Routing strategy to use (default: INTELLIGENT)
             exclude_localhost: Skip localhost during discovery (for SOLLOL gateway)
             discover_all_nodes: Scan full network for ALL nodes (slower but comprehensive)
             app_name: Custom application name for dashboard registration (e.g., "FlockParser")
@@ -224,9 +227,17 @@ class OllamaPool:
             enabled=enable_cache
         )
 
-        # Initialize intelligent routing
-        self.enable_intelligent_routing = enable_intelligent_routing
-        self.router = get_router() if enable_intelligent_routing else None
+        # Initialize routing strategy
+        # Handle backwards compatibility: enable_intelligent_routing overrides routing_strategy
+        if not enable_intelligent_routing and routing_strategy == RoutingStrategy.INTELLIGENT:
+            # User explicitly disabled intelligent routing but didn't specify strategy
+            self.routing_strategy = RoutingStrategy.ROUND_ROBIN
+        else:
+            self.routing_strategy = routing_strategy
+
+        # Keep enable_intelligent_routing for backwards compatibility
+        self.enable_intelligent_routing = (self.routing_strategy == RoutingStrategy.INTELLIGENT)
+        self.router = get_router() if self.enable_intelligent_routing else None
 
         # Initialize routing event logger (separate channel from regular logs)
         self.routing_logger = get_routing_logger()
@@ -574,7 +585,7 @@ class OllamaPool:
         self, payload: Optional[Dict[str, Any]] = None, priority: int = 5
     ) -> tuple[Dict[str, str], Optional[Dict[str, Any]]]:
         """
-        Select best node for request using intelligent routing.
+        Select best node for request using configured routing strategy.
 
         Args:
             payload: Request payload for task analysis
@@ -587,53 +598,213 @@ class OllamaPool:
             if not self.nodes:
                 raise RuntimeError("No Ollama nodes available")
 
-            # If intelligent routing is disabled or no payload, use round-robin
-            if not self.enable_intelligent_routing or not payload:
-                node = self.nodes[self._current_index % len(self.nodes)]
-                self._current_index += 1
-                return node, None
+            # Route based on configured strategy
+            if self.routing_strategy == RoutingStrategy.ROUND_ROBIN:
+                return self._select_round_robin(), None
 
-            # Use intelligent routing
-            try:
-                # Analyze request
-                context = self.router.analyze_request(payload, priority=priority)
+            elif self.routing_strategy == RoutingStrategy.LATENCY_FIRST:
+                return self._select_latency_first(), None
 
-                # Get available hosts metadata
-                available_hosts = list(self.stats["node_performance"].values())
+            elif self.routing_strategy == RoutingStrategy.LEAST_LOADED:
+                return self._select_least_loaded(), None
 
-                # Select optimal node
-                selected_host, decision = self.router.select_optimal_node(context, available_hosts)
+            elif self.routing_strategy == RoutingStrategy.FAIRNESS:
+                return self._select_fairness(), None
 
-                # Find matching node dict
-                for node in self.nodes:
-                    node_key = f"{node['host']}:{node['port']}"
-                    if node_key == selected_host:
-                        # Log the routing decision
-                        logger.info(f"🎯 Intelligent routing: {decision['reasoning']}")
+            elif self.routing_strategy == RoutingStrategy.INTELLIGENT:
+                return self._select_intelligent(payload, priority)
 
-                        # Log to SOLLOL routing stream (separate from regular logs)
-                        model = payload.get('model', 'unknown') if payload else 'unknown'
-                        node_url = f"{node['host']}:{node['port']}"
-                        self.routing_logger.log_ollama_node_selected(
-                            node_url=node_url,
-                            model=model,
-                            reason=decision['reasoning'],
-                            confidence=decision.get('confidence', 0),
-                            priority=priority
-                        )
-                        return node, decision
+            else:
+                # Unknown strategy - fallback to round-robin
+                logger.warning(f"Unknown routing strategy: {self.routing_strategy}, using round-robin")
+                return self._select_round_robin(), None
 
-                # Fallback if not found
-                logger.warning(f"Selected host {selected_host} not in nodes, using fallback")
-                node = self.nodes[self._current_index % len(self.nodes)]
-                self._current_index += 1
-                return node, None
+    def _select_round_robin(self) -> Dict[str, str]:
+        """
+        Simple round-robin node selection.
 
-            except Exception as e:
-                logger.warning(f"Intelligent routing failed: {e}, falling back to round-robin")
-                node = self.nodes[self._current_index % len(self.nodes)]
-                self._current_index += 1
-                return node, None
+        Rotates through nodes in order, providing predictable distribution.
+        No intelligence, no overhead - just simple rotation.
+
+        Returns:
+            Selected node
+        """
+        node = self.nodes[self._current_index % len(self.nodes)]
+        self._current_index += 1
+        logger.debug(f"Round-robin selected: {node['host']}:{node['port']}")
+        return node
+
+    def _select_latency_first(self) -> Dict[str, str]:
+        """
+        Select node with lowest average latency.
+
+        Prioritizes fastest responding nodes to minimize response time.
+        Good for latency-sensitive applications.
+
+        Returns:
+            Node with lowest average latency
+        """
+        # Build list of (node, performance_data) tuples
+        perf_nodes = [
+            (node, self.stats["node_performance"].get(f"{node['host']}:{node['port']}", {}))
+            for node in self.nodes
+        ]
+
+        # Filter out unavailable nodes
+        available_nodes = [
+            (node, perf) for node, perf in perf_nodes
+            if perf.get("available", True)
+        ]
+
+        if not available_nodes:
+            # All nodes unavailable - fallback to first node
+            logger.warning("All nodes unavailable for latency-first routing, using fallback")
+            return self.nodes[0]
+
+        # Select node with minimum average latency
+        best_node, best_perf = min(
+            available_nodes,
+            key=lambda x: x[1].get('latency_ms', float('inf'))
+        )
+
+        latency = best_perf.get('latency_ms', 0)
+        logger.debug(f"Latency-first selected: {best_node['host']}:{best_node['port']} ({latency:.1f}ms avg)")
+        return best_node
+
+    def _select_least_loaded(self) -> Dict[str, str]:
+        """
+        Select node with fewest active requests.
+
+        Maximizes parallelism by distributing load evenly across nodes.
+        Good for high-throughput batch processing.
+
+        Returns:
+            Node with fewest active requests
+        """
+        # Build list of (node, performance_data) tuples
+        perf_nodes = [
+            (node, self.stats["node_performance"].get(f"{node['host']}:{node['port']}", {}))
+            for node in self.nodes
+        ]
+
+        # Filter out unavailable nodes
+        available_nodes = [
+            (node, perf) for node, perf in perf_nodes
+            if perf.get("available", True)
+        ]
+
+        if not available_nodes:
+            # All nodes unavailable - fallback to first node
+            logger.warning("All nodes unavailable for least-loaded routing, using fallback")
+            return self.nodes[0]
+
+        # Select node with minimum active requests
+        best_node, best_perf = min(
+            available_nodes,
+            key=lambda x: x[1].get('active_requests', 0)
+        )
+
+        active = best_perf.get('active_requests', 0)
+        logger.debug(f"Least-loaded selected: {best_node['host']}:{best_node['port']} ({active} active requests)")
+        return best_node
+
+    def _select_fairness(self) -> Dict[str, str]:
+        """
+        Distribute requests evenly based on total request count.
+
+        Ensures all nodes get equal share of requests over time.
+        Good for fair resource utilization across heterogeneous hardware.
+
+        Returns:
+            Node with fewest total requests
+        """
+        # Build list of (node, performance_data) tuples
+        perf_nodes = [
+            (node, self.stats["node_performance"].get(f"{node['host']}:{node['port']}", {}))
+            for node in self.nodes
+        ]
+
+        # Filter out unavailable nodes
+        available_nodes = [
+            (node, perf) for node, perf in perf_nodes
+            if perf.get("available", True)
+        ]
+
+        if not available_nodes:
+            # All nodes unavailable - fallback to first node
+            logger.warning("All nodes unavailable for fairness routing, using fallback")
+            return self.nodes[0]
+
+        # Select node with minimum total requests
+        best_node, best_perf = min(
+            available_nodes,
+            key=lambda x: x[1].get('total_requests', 0)
+        )
+
+        total = best_perf.get('total_requests', 0)
+        logger.debug(f"Fairness selected: {best_node['host']}:{best_node['port']} ({total} total requests)")
+        return best_node
+
+    def _select_intelligent(
+        self, payload: Optional[Dict[str, Any]], priority: int
+    ) -> tuple[Dict[str, str], Dict[str, Any]]:
+        """
+        Intelligent task-aware routing with performance learning.
+
+        Analyzes request characteristics and selects optimal node based on:
+        - Task type (generation, embedding, chat)
+        - Model requirements
+        - Historical performance
+        - Node capabilities
+
+        Args:
+            payload: Request payload for task analysis
+            priority: Request priority
+
+        Returns:
+            (selected_node, routing_decision) tuple
+        """
+        if not payload or not self.router:
+            # No payload or router unavailable - fallback to round-robin
+            logger.debug("Intelligent routing unavailable, falling back to round-robin")
+            return self._select_round_robin(), None
+
+        try:
+            # Analyze request
+            context = self.router.analyze_request(payload, priority=priority)
+
+            # Get available hosts metadata
+            available_hosts = list(self.stats["node_performance"].values())
+
+            # Select optimal node
+            selected_host, decision = self.router.select_optimal_node(context, available_hosts)
+
+            # Find matching node dict
+            for node in self.nodes:
+                node_key = f"{node['host']}:{node['port']}"
+                if node_key == selected_host:
+                    # Log the routing decision
+                    logger.info(f"🎯 Intelligent routing: {decision['reasoning']}")
+
+                    # Log to SOLLOL routing stream (separate from regular logs)
+                    model = payload.get('model', 'unknown') if payload else 'unknown'
+                    node_url = f"{node['host']}:{node['port']}"
+                    self.routing_logger.log_ollama_node_selected(
+                        node_url=node_url,
+                        model=model,
+                        reason=decision['reasoning'],
+                        confidence=decision.get('confidence', 0),
+                        priority=priority
+                    )
+                    return node, decision
+
+            # Fallback if not found
+            logger.warning(f"Selected host {selected_host} not in nodes, using round-robin fallback")
+            return self._select_round_robin(), None
+
+        except Exception as e:
+            logger.warning(f"Intelligent routing failed: {e}, falling back to round-robin")
+            return self._select_round_robin(), None
 
     def _make_request(
         self, endpoint: str, data: Dict[str, Any], priority: int = 5, timeout: float = 300.0
@@ -2202,6 +2373,7 @@ class OllamaPool:
                 **self.stats,
                 "nodes_configured": len(self.nodes),
                 "nodes": [f"{n['host']}:{n['port']}" for n in self.nodes],
+                "routing_strategy": self.routing_strategy.value,
                 "intelligent_routing_enabled": self.enable_intelligent_routing,
                 "http2_enabled": HTTPX_AVAILABLE,
                 "async_io_enabled": self.async_session is not None,
