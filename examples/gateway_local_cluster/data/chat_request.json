@@ -1,9 +1,8 @@
 {
-  "_note": "Sample chat payload for mock gateway cluster; uses a tiny prompt for predictable responses.",
   "model": "llama3.2",
   "messages": [
     {"role": "system", "content": "You are a concise assistant for integration testing."},
-    {"role": "user", "content": "Respond with the word \"ready\"."}
+    {"role": "user", "content": "In one short sentence, share a fun fact about sea otters."}
   ],
   "stream": false
 }

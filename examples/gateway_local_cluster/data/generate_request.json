@@ -1,6 +1,5 @@
 {
-  "_note": "Fixture for OllamaPool.generate; simple deterministic prompt for local cluster tests.",
   "model": "llama3.2",
-  "prompt": "State the status: ready.",
+  "prompt": "List two brief tips for staying focused while working.",
   "stream": false
 }
