@@ -50,8 +50,9 @@ HEALTH
 
 CHAT
 {
+  "done": true,
   "message": {
-    "content": "ready",
+    "content": "Sea otters wrap themselves in kelp to nap safely.",
     "role": "assistant"
   },
   "model": "llama3.2"
@@ -59,8 +60,9 @@ CHAT
 
 GENERATE
 {
-  "response": "Status: ready.",
-  "model": "llama3.2"
+  "done": true,
+  "model": "llama3.2",
+  "response": "- Minimize interruptions by silencing notifications.\n- Take short breaks to reset your focus."
 }
 ```
 

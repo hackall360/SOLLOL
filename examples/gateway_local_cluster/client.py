@@ -38,7 +38,6 @@ def _load_payload(filename: str) -> MutableMapping[str, Any]:
     path = _DATA_DIR / filename
     with path.open("r", encoding="utf-8") as fh:
         payload = json.load(fh)
-    payload.pop("_note", None)
     return payload
 
 
@@ -52,6 +51,41 @@ _TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 def _ensure(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
+
+
+def _ensure_model_matches(
+    response: Mapping[str, Any],
+    expected_model: str,
+    *,
+    context: str,
+) -> None:
+    actual_model = response.get("model")
+    _ensure(
+        actual_model == expected_model,
+        f"{context} response model {actual_model!r} did not match requested {expected_model!r}",
+    )
+
+
+def _ensure_done_flag(response: Mapping[str, Any], *, context: str) -> None:
+    if "done" in response:
+        _ensure(response.get("done") is True, f"{context} response did not report done=True")
+    if "done_reason" in response:
+        done_reason = response.get("done_reason")
+        _ensure(
+            isinstance(done_reason, str) and done_reason.strip(),
+            f"{context} response included empty done_reason",
+        )
+
+
+def _ensure_usage_tokens(response: Mapping[str, Any], *, context: str) -> None:
+    usage = response.get("usage")
+    if isinstance(usage, Mapping):
+        total_tokens = usage.get("total_tokens")
+        if total_tokens is not None:
+            _ensure(
+                isinstance(total_tokens, int) and total_tokens >= 0,
+                f"{context} usage reported invalid total_tokens {total_tokens!r}",
+            )
 
 
 async def _async_request(
@@ -157,9 +191,19 @@ async def run_chat_async(
         client = httpx.AsyncClient(base_url=base_url, timeout=_TIMEOUT)
     try:
         data = await _async_request(client, "POST", "/api/chat", json_payload=payload)
+        _ensure_model_matches(data, payload["model"], context="Chat")
+        _ensure_done_flag(data, context="Chat")
+        _ensure_usage_tokens(data, context="Chat")
+
         message = data.get("message")
+        _ensure(isinstance(message, Mapping), "Chat response missing message object")
+        role = message.get("role") if isinstance(message, Mapping) else None
+        _ensure(role == "assistant", "Chat message role was not 'assistant'")
         content = message.get("content") if isinstance(message, Mapping) else None
-        _ensure(content and "ready" in content.lower(), "Chat response did not include expected 'ready' content")
+        _ensure(
+            isinstance(content, str) and content.strip(),
+            "Chat response did not include assistant content",
+        )
         return data
     finally:
         if owns_client and client is not None:
@@ -177,9 +221,19 @@ def run_chat(
         client = httpx.Client(base_url=base_url, timeout=_TIMEOUT)
     try:
         data = _sync_request(client, "POST", "/api/chat", json_payload=payload)
+        _ensure_model_matches(data, payload["model"], context="Chat")
+        _ensure_done_flag(data, context="Chat")
+        _ensure_usage_tokens(data, context="Chat")
+
         message = data.get("message")
+        _ensure(isinstance(message, Mapping), "Chat response missing message object")
+        role = message.get("role") if isinstance(message, Mapping) else None
+        _ensure(role == "assistant", "Chat message role was not 'assistant'")
         content = message.get("content") if isinstance(message, Mapping) else None
-        _ensure(content and "ready" in content.lower(), "Chat response did not include expected 'ready' content")
+        _ensure(
+            isinstance(content, str) and content.strip(),
+            "Chat response did not include assistant content",
+        )
         return data
     finally:
         if owns_client and client is not None:
@@ -197,10 +251,14 @@ async def run_generate_async(
         client = httpx.AsyncClient(base_url=base_url, timeout=_TIMEOUT)
     try:
         data = await _async_request(client, "POST", "/api/generate", json_payload=payload)
+        _ensure_model_matches(data, payload["model"], context="Generate")
+        _ensure_done_flag(data, context="Generate")
+        _ensure_usage_tokens(data, context="Generate")
+
         response_text = data.get("response")
         _ensure(
-            isinstance(response_text, str) and "ready" in response_text.lower(),
-            "Generate response did not include expected 'ready' text",
+            isinstance(response_text, str) and response_text.strip(),
+            "Generate response did not include text content",
         )
         return data
     finally:
@@ -219,10 +277,14 @@ def run_generate(
         client = httpx.Client(base_url=base_url, timeout=_TIMEOUT)
     try:
         data = _sync_request(client, "POST", "/api/generate", json_payload=payload)
+        _ensure_model_matches(data, payload["model"], context="Generate")
+        _ensure_done_flag(data, context="Generate")
+        _ensure_usage_tokens(data, context="Generate")
+
         response_text = data.get("response")
         _ensure(
-            isinstance(response_text, str) and "ready" in response_text.lower(),
-            "Generate response did not include expected 'ready' text",
+            isinstance(response_text, str) and response_text.strip(),
+            "Generate response did not include text content",
         )
         return data
     finally:
@@ -241,13 +303,26 @@ async def run_embed_async(
         client = httpx.AsyncClient(base_url=base_url, timeout=_TIMEOUT)
     try:
         data = await _async_request(client, "POST", "/api/embed", json_payload=payload)
-        embedding = data.get("embedding")
-        if isinstance(embedding, Iterable) and not isinstance(embedding, (str, bytes)):
-            embedding = list(embedding)
+        _ensure_model_matches(data, payload["model"], context="Embed")
+
+        vector = data.get("embedding")
+        if vector is None and "embeddings" in data:
+            embeddings_field = data["embeddings"]
+            if isinstance(embeddings_field, Iterable) and not isinstance(embeddings_field, (str, bytes)):
+                embeddings_list = list(embeddings_field)
+                if embeddings_list:
+                    vector = embeddings_list[0]
+        if isinstance(vector, Iterable) and not isinstance(vector, (str, bytes)):
+            vector = list(vector)
         _ensure(
-            isinstance(embedding, list) and len(embedding) > 0,
+            isinstance(vector, list) and len(vector) > 0,
             "Embed response did not include embedding vector",
         )
+        if vector:
+            _ensure(
+                all(isinstance(value, (int, float)) for value in vector[: min(5, len(vector))]),
+                "Embed response vector did not contain numeric values",
+            )
         return data
     finally:
         if owns_client and client is not None:
@@ -265,13 +340,26 @@ def run_embed(
         client = httpx.Client(base_url=base_url, timeout=_TIMEOUT)
     try:
         data = _sync_request(client, "POST", "/api/embed", json_payload=payload)
-        embedding = data.get("embedding")
-        if isinstance(embedding, Iterable):
-            embedding = list(embedding)
+        _ensure_model_matches(data, payload["model"], context="Embed")
+
+        vector = data.get("embedding")
+        if vector is None and "embeddings" in data:
+            embeddings_field = data["embeddings"]
+            if isinstance(embeddings_field, Iterable) and not isinstance(embeddings_field, (str, bytes)):
+                embeddings_list = list(embeddings_field)
+                if embeddings_list:
+                    vector = embeddings_list[0]
+        if isinstance(vector, Iterable) and not isinstance(vector, (str, bytes)):
+            vector = list(vector)
         _ensure(
-            isinstance(embedding, list) and len(embedding) > 0,
+            isinstance(vector, list) and len(vector) > 0,
             "Embed response did not include embedding vector",
         )
+        if vector:
+            _ensure(
+                all(isinstance(value, (int, float)) for value in vector[: min(5, len(vector))]),
+                "Embed response vector did not contain numeric values",
+            )
         return data
     finally:
         if owns_client and client is not None:

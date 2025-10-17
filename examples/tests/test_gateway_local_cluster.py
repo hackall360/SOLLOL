@@ -90,7 +90,7 @@ def test_gateway_local_cluster_end_to_end(disable_dask):
         health = client.fetch_health(gateway_base)
         chat = client.run_chat(gateway_base)
         generate = client.run_generate(gateway_base)
-        embed = client.run_embed(mock_base)
+        embed = client.run_embed(gateway_base)
     finally:
         for handle in reversed(handles):
             with handle:
@@ -99,16 +99,37 @@ def test_gateway_local_cluster_end_to_end(disable_dask):
     assert health.get("service") == "SOLLOL"
 
     assert chat.get("model") == "llama3.2"
-    assert chat.get("created_at") == "2024-01-01T00:00:00Z"
+    assert isinstance(chat.get("created_at"), str)
     assert chat.get("done") is True
-    assert chat.get("message") == {"role": "assistant", "content": "ready"}
+    message = chat.get("message")
+    assert isinstance(message, dict)
+    assert message.get("role") == "assistant"
+    assert isinstance(message.get("content"), str) and message["content"].strip()
+    usage = chat.get("usage")
+    if isinstance(usage, dict):
+        total_tokens = usage.get("total_tokens")
+        if total_tokens is not None:
+            assert isinstance(total_tokens, int) and total_tokens >= 0
 
     assert generate.get("model") == "llama3.2"
-    assert generate.get("created_at") == "2024-01-01T00:00:00Z"
-    assert generate.get("response") == "Status: ready."
+    assert isinstance(generate.get("created_at"), str)
     assert generate.get("done") is True
-    assert embed == {
-        "model": "nomic-embed-text",
-        "created_at": "2024-01-01T00:00:00Z",
-        "embedding": [0.1, 0.2, 0.3, 0.4],
-    }
+    response_text = generate.get("response")
+    assert isinstance(response_text, str) and response_text.strip()
+    usage = generate.get("usage")
+    if isinstance(usage, dict):
+        total_tokens = usage.get("total_tokens")
+        if total_tokens is not None:
+            assert isinstance(total_tokens, int) and total_tokens >= 0
+
+    assert embed.get("model") == "nomic-embed-text"
+    created_at = embed.get("created_at")
+    if created_at is not None:
+        assert isinstance(created_at, str)
+    vector = embed.get("embedding")
+    if vector is None and isinstance(embed.get("embeddings"), list):
+        embeddings_list = embed["embeddings"]
+        if embeddings_list:
+            vector = embeddings_list[0]
+    assert isinstance(vector, list) and len(vector) > 0
+    assert all(isinstance(value, (int, float)) for value in vector[: min(5, len(vector))])

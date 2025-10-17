@@ -40,7 +40,6 @@ def _load_payloads() -> dict[str, Mapping[str, Any]]:
         file_path = _DATA_DIR / f"{name}_request.json"
         with file_path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
-        data.pop("_note", None)
         payloads[name] = data
     return payloads
 
