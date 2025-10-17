@@ -9,28 +9,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
 from typing import Iterator, Mapping, MutableMapping, Optional
-
-
-@dataclass
-class OllamaProcessHandle:
-    """Simple wrapper exposing lifecycle helpers for a spawned Ollama process."""
-
-    process: subprocess.Popen[bytes]
-    host: str
-    port: int
-
-    def terminate(self) -> None:
-        """Terminate the underlying Ollama process if it is still running."""
-
-        if self.process.poll() is None:
-            self.process.terminate()
-
-    def wait(self, timeout: Optional[float] = None) -> int:
-        """Block until the process exits and return its exit code."""
-
-        return self.process.wait(timeout=timeout)
 
 
 def _prepare_environment(
@@ -78,14 +57,14 @@ def _wait_for_readiness(
 
 
 @contextlib.contextmanager
-def run_ollama(
+def ollama_runtime(
     host: str = "127.0.0.1",
     port: int = 11434,
     env: Optional[Mapping[str, str]] = None,
     readiness_timeout: float = 60.0,
     poll_interval: float = 0.5,
     extra_args: Optional[list[str]] = None,
-) -> Iterator[OllamaProcessHandle]:
+) -> Iterator[subprocess.Popen[bytes]]:
     """Launch ``ollama serve`` and yield a handle once the instance is reachable."""
 
     binary = shutil.which("ollama")
@@ -107,15 +86,25 @@ def run_ollama(
         stderr=subprocess.PIPE,
         env=full_env,
     )
-    handle = OllamaProcessHandle(process=process, host=host, port=port)
 
     try:
         _wait_for_readiness(host, port, readiness_timeout, poll_interval, process)
-        yield handle
+        yield process
     finally:
-        handle.terminate()
+        if process.poll() is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
         try:
-            handle.wait(timeout=5)
+            process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            process.kill()
-            handle.wait()
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            process.wait()
+
+
+@contextlib.contextmanager
+def run_ollama(**kwargs: object) -> Iterator[subprocess.Popen[bytes]]:
+    """Backward compatible wrapper around :func:`ollama_runtime`."""
+
+    with ollama_runtime(**kwargs) as process:
+        yield process

@@ -123,6 +123,24 @@ def start_mock_server(
     return handle
 
 
+def start_subprocess(
+    popen: subprocess.Popen,
+    *,
+    name: str,
+    readiness_check: Optional[Callable[..., Any]] = None,
+    readiness_timeout: float = 30.0,
+) -> ManagedProcess:
+    """Wrap a :class:`subprocess.Popen` in :class:`ManagedProcess` and run readiness checks."""
+
+    handle = ManagedProcess(process=popen, name=name)
+    try:
+        _invoke_readiness_check(readiness_check, timeout=readiness_timeout, handle=handle)
+    except Exception:
+        handle.terminate()
+        raise
+    return handle
+
+
 def start_sollol_gateway(
     command_factory: Callable[..., Sequence[str]],
     *,
@@ -138,8 +156,87 @@ def start_sollol_gateway(
         raise TypeError("command_factory must return a sequence of arguments suitable for subprocess.Popen")
 
     popen = subprocess.Popen(command, **(popen_kwargs or {}))
-    handle = ManagedProcess(process=popen, name=name)
-    _invoke_readiness_check(readiness_check, timeout=readiness_timeout, handle=handle)
+    return start_subprocess(
+        popen,
+        name=name,
+        readiness_check=readiness_check,
+        readiness_timeout=readiness_timeout,
+    )
+
+
+def start_ollama_runtime(
+    runtime_config: Mapping[str, Any],
+    *,
+    readiness_timeout: Optional[float] = None,
+) -> ManagedProcess:
+    """Launch a real Ollama runtime and wrap it in :class:`ManagedProcess`."""
+
+    from .ollama_runtime import ollama_runtime
+
+    config = dict(runtime_config)
+    host = config.pop("host", "127.0.0.1")
+    port = int(config.pop("port", 11434))
+    env = config.pop("env", None)
+    poll_interval = float(config.pop("poll_interval", 0.5))
+    extra_args = config.pop("extra_args", None)
+    name = config.pop("name", f"ollama:{host}:{port}")
+    cm_readiness_timeout = config.pop("readiness_timeout", None)
+
+    if readiness_timeout is None:
+        readiness_timeout = float(cm_readiness_timeout) if cm_readiness_timeout is not None else 60.0
+    elif cm_readiness_timeout is not None:
+        raise ValueError("readiness_timeout provided both in runtime_config and as a keyword argument")
+
+    if config:
+        unknown = ", ".join(sorted(config))
+        raise TypeError(f"Unsupported runtime configuration keys: {unknown}")
+
+    runtime_cm = ollama_runtime(
+        host=host,
+        port=port,
+        env=env,
+        readiness_timeout=readiness_timeout,
+        poll_interval=poll_interval,
+        extra_args=list(extra_args) if extra_args is not None else None,
+    )
+
+    popen = runtime_cm.__enter__()
+    context_closed = False
+
+    def _close_context() -> None:
+        nonlocal context_closed
+        if context_closed:
+            return
+        context_closed = True
+        runtime_cm.__exit__(None, None, None)
+
+    handle = start_subprocess(
+        popen,
+        name=name,
+        readiness_timeout=readiness_timeout,
+    )
+
+    original_terminate = handle.terminate
+
+    def terminate(timeout: float = 5.0) -> None:  # type: ignore[override]
+        try:
+            original_terminate(timeout=timeout)
+        finally:
+            _close_context()
+
+    handle.terminate = terminate  # type: ignore[assignment]
+
+    original_wait = handle.wait
+
+    def wait(timeout: Optional[float] = None) -> Optional[int]:  # type: ignore[override]
+        try:
+            return original_wait(timeout=timeout)
+        finally:
+            if timeout is None or not handle.is_running():
+                _close_context()
+
+    handle.wait = wait  # type: ignore[assignment]
+
     return handle
 
 
