@@ -262,6 +262,100 @@
             grid-column: 1 / -1;
         }
 
+        /* Tooltip styles */
+        .decision-item {
+            position: relative;
+            cursor: help;
+        }
+
+        .decision-item:hover .tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .tooltip {
+            visibility: hidden;
+            opacity: 0;
+            position: absolute;
+            z-index: 1000;
+            left: 50%;
+            top: 100%;
+            transform: translateX(-50%);
+            margin-top: 8px;
+            background: #0a0e27;
+            border: 2px solid #667eea;
+            padding: 15px;
+            border-radius: 8px;
+            width: 350px;
+            font-size: 0.85em;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+
+        .tooltip::before {
+            content: '';
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 8px solid transparent;
+            border-bottom-color: #667eea;
+        }
+
+        .tooltip-section {
+            margin-bottom: 10px;
+        }
+
+        .tooltip-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .tooltip-label {
+            color: #9ca3af;
+            font-size: 0.9em;
+            margin-bottom: 4px;
+        }
+
+        .tooltip-value {
+            color: #f0f0f0;
+            font-weight: bold;
+        }
+
+        .decisions-table {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .decision-row {
+            background: #0a0e27;
+            padding: 12px 15px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            border-left: 4px solid #667eea;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .decision-time {
+            color: #9ca3af;
+            font-size: 0.85em;
+        }
+
+        .decision-info {
+            display: flex;
+            gap: 15px;
+            font-size: 0.85em;
+        }
+
+        .decision-badge {
+            background: #667eea;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+        }
+
         @media (max-width: 1024px) {
             .main-grid {
                 grid-template-columns: 1fr;
@@ -347,6 +441,13 @@
         </div>
 
         <div class="panel full-width">
+            <h2>🎯 Recent Routing Decisions</h2>
+            <div class="decisions-table" id="decisions-list">
+                <div class="no-data">Waiting for routing decisions...</div>
+            </div>
+        </div>
+
+        <div class="panel full-width">
             <h2>📜 Real-Time Logs</h2>
             <pre id="log-container" style="max-height: 400px; overflow-y: auto; background: #0a0e27; padding: 15px; border-radius: 6px;"></pre>
         </div>
@@ -358,17 +459,76 @@
 
         async function fetchDashboard() {
             try {
-                const [dashResponse, appsResponse] = await Promise.all([
+                const [dashResponse, appsResponse, decisionsResponse] = await Promise.all([
                     fetch(`${API_BASE}/api/dashboard`),
-                    fetch(`${API_BASE}/api/applications`)
+                    fetch(`${API_BASE}/api/applications`),
+                    fetch(`${API_BASE}/api/routing_decisions`)
                 ]);
                 const data = await dashResponse.json();
                 const appsData = await appsResponse.json();
+                const decisionsData = await decisionsResponse.json();
                 updateDashboard(data, appsData);
+                updateRoutingDecisions(decisionsData);
                 document.getElementById('refresh-status').textContent = `Updated ${new Date().toLocaleTimeString()}`;
             } catch (error) {
                 console.error('Failed to fetch dashboard data:', error);
                 document.getElementById('refresh-status').textContent = 'Connection error';
+            }
+        }
+
+        function updateRoutingDecisions(data) {
+            const decisionsList = document.getElementById('decisions-list');
+            if (data.decisions && data.decisions.length > 0) {
+                decisionsList.innerHTML = data.decisions.map(decision => {
+                    const time = new Date(decision.timestamp).toLocaleTimeString();
+                    const model = decision.model || 'N/A';
+                    const backend = decision.backend || 'N/A';
+                    const nodeUrl = decision.node_url || 'N/A';
+                    const reason = decision.reason || 'No reason provided';
+                    const taskType = decision.task_type || 'unknown';
+                    const complexity = decision.complexity || 'unknown';
+                    const score = decision.score || 0;
+                    const latency = decision.latency_ms || 0;
+                    const gpuMem = decision.gpu_mem || 0;
+
+                    return `
+                    <div class="decision-row decision-item">
+                        <div class="decision-time">${time}</div>
+                        <div class="decision-info">
+                            <span>📦 ${model}</span>
+                            <span>🎯 ${nodeUrl}</span>
+                            <span class="decision-badge">${backend}</span>
+                        </div>
+                        <div style="font-size: 0.85em; color: #9ca3af;">Score: ${score.toFixed(1)}</div>
+                        <div class="tooltip">
+                            <div class="tooltip-section">
+                                <div class="tooltip-label">Routing Decision</div>
+                                <div class="tooltip-value">${reason}</div>
+                            </div>
+                            <div class="tooltip-section">
+                                <div class="tooltip-label">Task Type</div>
+                                <div class="tooltip-value">${taskType} (${complexity})</div>
+                            </div>
+                            <div class="tooltip-section">
+                                <div class="tooltip-label">Node Performance</div>
+                                <div class="tooltip-value">
+                                    Latency: ${Math.round(latency)}ms<br>
+                                    GPU Memory: ${gpuMem}MB<br>
+                                    Score: ${score.toFixed(2)}
+                                </div>
+                            </div>
+                            <div class="tooltip-section">
+                                <div class="tooltip-label">Why this node?</div>
+                                <div class="tooltip-value" style="font-size: 0.9em; color: #9ca3af;">
+                                    ${reason}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }).join('');
+            } else {
+                decisionsList.innerHTML = '<div class="no-data">No routing decisions yet (Redis not available or no events)</div>';
             }
         }
 

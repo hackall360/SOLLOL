@@ -233,6 +233,55 @@ def health():
     return jsonify({"status": "ok", "service": "sollol-dashboard"})
 
 
+@app.route("/api/routing_decisions")
+def routing_decisions():
+    """
+    Get recent routing decisions from Redis stream.
+
+    Returns last 50 routing decisions with full metadata for dashboard tooltips.
+    """
+    try:
+        import redis
+        redis_url = os.getenv("SOLLOL_REDIS_URL", "redis://localhost:6379")
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+
+        # Read last 50 routing decisions from stream
+        stream_key = "sollol:routing_stream"
+        messages = redis_client.xrevrange(stream_key, count=50)
+
+        decisions = []
+        for msg_id, msg_data in messages:
+            try:
+                import json
+                event_json = msg_data.get("event", "{}")
+                event = json.loads(event_json)
+
+                # Only include routing decision events
+                if event.get("event_type") in ("ROUTE_DECISION", "OLLAMA_NODE_SELECTED", "RPC_BACKEND_SELECTED"):
+                    decisions.append({
+                        "timestamp": event.get("timestamp"),
+                        "model": event.get("model"),
+                        "backend": event.get("backend"),
+                        "node_url": event.get("node_url", "N/A"),
+                        "reason": event.get("reason", "No reason provided"),
+                        "task_type": event.get("task_type", "unknown"),
+                        "complexity": event.get("complexity", "unknown"),
+                        "score": event.get("score", 0),
+                        "latency_ms": event.get("latency_ms", 0),
+                        "gpu_mem": event.get("gpu_mem", 0),
+                        "instance_id": event.get("instance_id"),
+                    })
+            except:
+                continue
+
+        return jsonify({"decisions": decisions})
+
+    except Exception as e:
+        # Redis not available - return empty list
+        logger.debug(f"Could not fetch routing decisions: {e}")
+        return jsonify({"decisions": []})
+
+
 clients = []
 
 
