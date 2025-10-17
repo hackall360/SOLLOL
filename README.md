@@ -120,6 +120,26 @@ sollol install-gpu-reporter --redis-host 10.9.66.154
 
 ---
 
+## 📸 Screenshots
+
+### Dashboard Overview
+![SOLLOL Unified Dashboard](docs/screenshots/dashboard-overview.png)
+*Real-time monitoring with P50/P95/P99 latency metrics, network nodes, RPC backends, and active applications*
+
+### Ray & Dask Integration
+![Ray and Dask Dashboards](docs/screenshots/dashboard-ray-dask.png)
+*Embedded Ray and Dask dashboards for distributed task monitoring*
+
+### Activity Monitoring
+![Real-time Activity Logs](docs/screenshots/dashboard-activity.png)
+*Live request/response activity streams from Ollama nodes and RPC backends*
+
+### Performance Metrics
+![Performance Analytics](docs/screenshots/dashboard-metrics.png)
+*Detailed performance analytics with routing decisions and SOLLOL metrics*
+
+---
+
 ## 🔥 Why SOLLOL?
 
 ### 1. **Two Distribution Modes in One System**
