@@ -14,7 +14,7 @@ else
   export PYTHONPATH="${PROJECT_ROOT}/src"
 fi
 
-CLI_MODULE="examples.gateway_mock_cluster"
+CLI_MODULE="examples.gateway_local_cluster"
 CLI_COMMAND="run"
 
 CLI_ARGS=()

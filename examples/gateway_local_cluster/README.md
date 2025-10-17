@@ -1,6 +1,6 @@
-# Gateway Mock Cluster Demo
+# Gateway Local Cluster Demo
 
-The gateway mock cluster example illustrates how to spin up a miniature SOLLOL deployment on a single workstation.  It shows how the SOLLOL gateway coordinates mock Ollama nodes, Ray actors, and optional Dask batch workers so that you can rehearse load-balancing behavior before touching production infrastructure.
+The gateway local cluster example illustrates how to spin up a miniature SOLLOL deployment on a single workstation.  It shows how the SOLLOL gateway coordinates mock Ollama nodes, Ray actors, and optional Dask batch workers so that you can rehearse load-balancing behavior before touching production infrastructure.
 
 ## Prerequisites
 - Python 3.9+ with the SOLLOL package installed in editable mode (`pip install -e .`).
@@ -13,10 +13,10 @@ The gateway mock cluster example illustrates how to spin up a miniature SOLLOL d
 An executable helper, [`run.sh`](./run.sh), orchestrates the full loop: it spawns the mock Ollama server, launches the SOLLOL gateway, runs the validation client, and then shuts everything down cleanly. From the repository root run:
 
 ```bash
-./examples/gateway_mock_cluster/run.sh
+./examples/gateway_local_cluster/run.sh
 ```
 
-Environment variables map to the CLI flags exposed by `python -m examples.gateway_mock_cluster run`:
+Environment variables map to the CLI flags exposed by `python -m examples.gateway_local_cluster run`:
 
 | Environment variable | Description | Default |
 | --- | --- | --- |
@@ -81,7 +81,7 @@ GENERATE
        --ollama-nodes "127.0.0.1:11434,127.0.0.1:21434"
      ```
    - Adjust flags (see above) to emphasize the behavior you want to demo.
-4. **Interact with the mock cluster**
+4. **Interact with the local cluster**
    - Send sample requests to `http://localhost:18000/api/chat` or `.../api/generate` and observe routing decisions in the logs.
    - Inspect Ray and Dask dashboards if they are running to highlight task distribution.
 5. **Extend the scenario**

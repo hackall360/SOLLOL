@@ -1,4 +1,4 @@
-"""Entry point for the gateway mock cluster demonstration."""
+"""Entry point for the gateway local cluster demonstration."""
 from __future__ import annotations
 
 import json

@@ -1,9 +1,9 @@
-"""Helpers for interacting with the mock gateway cluster endpoints.
+"""Helpers for interacting with the gateway local cluster endpoints.
 
 This module provides thin httpx-based helpers that the example CLI runner
-and tests can reuse to exercise the mock cluster.  Both synchronous and
-asynchronous entry points are exposed so callers can pick what fits their
-control flow.
+and tests can reuse to exercise the local cluster demo.  Both synchronous
+and asynchronous entry points are exposed so callers can pick what fits
+their control flow.
 """
 
 from __future__ import annotations

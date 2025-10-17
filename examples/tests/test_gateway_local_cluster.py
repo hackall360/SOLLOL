@@ -18,10 +18,10 @@ if str(_SRC_DIR) not in existing_pythonpath.split(os.pathsep):
     updated = f"{_SRC_DIR}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(_SRC_DIR)
     os.environ["PYTHONPATH"] = updated
 
-from examples.gateway_mock_cluster import client
-from examples.gateway_mock_cluster.gateway_process import run_gateway
-from examples.gateway_mock_cluster.mock_ollama import run as run_mock_ollama
-from examples.gateway_mock_cluster import process_utils
+from examples.gateway_local_cluster import client
+from examples.gateway_local_cluster.gateway_process import run_gateway
+from examples.gateway_local_cluster.mock_ollama import run as run_mock_ollama
+from examples.gateway_local_cluster import process_utils
 from sollol.pool import OllamaPool
 
 
@@ -41,7 +41,7 @@ def _allocate_port(host: str = "127.0.0.1") -> int:
         return sock.getsockname()[1]
 
 
-def test_gateway_mock_cluster_end_to_end(disable_dask):
+def test_gateway_local_cluster_end_to_end(disable_dask):
     host = "127.0.0.1"
     gateway_port = _allocate_port(host)
     mock_port = _allocate_port(host)

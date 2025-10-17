@@ -24,7 +24,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Subset of the Ollama chat payload used in the mock cluster examples."""
+    """Subset of the Ollama chat payload used in the local cluster examples."""
 
     model: str
     messages: List[ChatMessage]
@@ -32,7 +32,7 @@ class ChatRequest(BaseModel):
 
 
 class GenerateRequest(BaseModel):
-    """Subset of the generate payload used by the mock cluster demo."""
+    """Subset of the generate payload used by the local cluster demo."""
 
     model: str
     prompt: str
@@ -40,7 +40,7 @@ class GenerateRequest(BaseModel):
 
 
 class EmbedRequest(BaseModel):
-    """Subset of the embed payload used by the mock cluster demo."""
+    """Subset of the embed payload used by the local cluster demo."""
 
     model: str
     input: Union[str, Sequence[str]] = Field(..., description="Text to embed")
