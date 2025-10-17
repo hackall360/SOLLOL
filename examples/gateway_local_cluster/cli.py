@@ -1,4 +1,4 @@
-"""Command-line interface for the gateway mock cluster example."""
+"""Command-line interface for the gateway local cluster example."""
 from __future__ import annotations
 
 import typer
@@ -13,7 +13,7 @@ from .gateway_process import (
 from .mock_ollama import run as run_mock_ollama
 from .run_demo import run_demo
 
-app = typer.Typer(help="Utilities for running the gateway mock cluster demo")
+app = typer.Typer(help="Utilities for running the gateway local cluster demo")
 
 
 @app.command()
@@ -150,7 +150,7 @@ def start_gateway(
         help="Enable verbose output before launching the gateway.",
     ),
 ) -> None:
-    """Run only the SOLLOL gateway configured for the mock cluster."""
+    """Run only the SOLLOL gateway configured for the local cluster demo."""
 
     if verbose:
         typer.echo(

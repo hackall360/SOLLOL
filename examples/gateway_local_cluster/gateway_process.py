@@ -1,4 +1,4 @@
-"""Helpers to orchestrate a SOLLOL gateway in the mock cluster example."""
+"""Helpers to orchestrate a SOLLOL gateway in the local cluster example."""
 
 import os
 from typing import Optional
