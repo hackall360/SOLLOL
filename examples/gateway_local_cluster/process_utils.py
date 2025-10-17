@@ -240,6 +240,42 @@ def start_ollama_runtime(
     return handle
 
 
+def format_ollama_nodes(
+    definitions: Optional[Sequence[Any]],
+    *,
+    default_host: str = "127.0.0.1",
+    default_port: int = 11434,
+) -> list[dict[str, Any]]:
+    """Convert runtime definitions into dictionaries suitable for SOLLOL."""
+
+    if definitions is None:
+        return [{"host": default_host, "port": int(default_port)}]
+
+    formatted: list[dict[str, Any]] = []
+    for definition in definitions:
+        host: Any = None
+        port: Any = None
+
+        if isinstance(definition, Mapping):
+            host = definition.get("host")
+            port = definition.get("port")
+        elif isinstance(definition, Sequence) and not isinstance(definition, (str, bytes)):
+            if len(definition) >= 2:
+                host, port = definition[0], definition[1]
+        else:
+            host = getattr(definition, "host", None)
+            port = getattr(definition, "port", None)
+
+        if host is None or port is None:
+            raise ValueError(
+                "Ollama node definitions must provide host and port information"
+            )
+
+        formatted.append({"host": str(host), "port": int(port)})
+
+    return formatted
+
+
 def wait_for_port(host: str, port: int, *, timeout: float = 30.0, interval: float = 0.1) -> None:
     """Poll ``host:port`` until a TCP connection succeeds or the timeout elapses."""
     deadline = time.monotonic() + timeout

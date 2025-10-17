@@ -181,6 +181,18 @@ def start_gateway(
         show_default=True,
         help="Number of Dask workers to start.",
     ),
+    enable_ray: bool = typer.Option(
+        True,
+        "--enable-ray/--disable-ray",
+        show_default=True,
+        help="Toggle Ray integration when launching the gateway.",
+    ),
+    enable_dask: bool = typer.Option(
+        True,
+        "--enable-dask/--disable-dask",
+        show_default=True,
+        help="Toggle Dask integration when launching the gateway.",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -218,6 +230,8 @@ def start_gateway(
         enable_batch_processing=enable_batch_processing,
         ray_workers=ray_workers,
         dask_workers=dask_workers,
+        enable_ray=enable_ray,
+        enable_dask=enable_dask,
     )
 
 
