@@ -1560,7 +1560,13 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 Created by [BenevolentJoker-JohnL](https://github.com/BenevolentJoker-JohnL)
 
-Part of the [SynapticLlamas](https://github.com/BenevolentJoker-JohnL/SynapticLlamas) ecosystem.
+**Part of the Complete AI Ecosystem:**
+- **[SynapticLlamas](https://github.com/BenevolentJoker-JohnL/SynapticLlamas)** - Multi-Agent Orchestration
+- **[FlockParser](https://github.com/BenevolentJoker-JohnL/FlockParser)** - Document RAG Intelligence
+- **[SOLLOL](https://github.com/BenevolentJoker-JohnL/SOLLOL)** - Distributed Inference Platform (this project)
+
+**Special Thanks:**
+- **[Dallan Loomis](https://github.com/DallanL)** - For always providing invaluable support, feedback, and guidance throughout development. Your insights and encouragement have been instrumental in shaping this project.
 
 Built with: Ray, Dask, FastAPI, llama.cpp, Ollama
 
