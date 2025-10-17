@@ -398,10 +398,59 @@ def run_full_sequence(base_url: str) -> dict[str, Mapping[str, Any]]:
     }
 
 
+def _format_multiline_strings(pretty: str) -> str:
+    """Render JSON strings that contain newlines as readable blocks."""
+
+    lines = pretty.splitlines()
+    rendered: list[str] = []
+
+    for line in lines:
+        if "\\n" not in line:
+            rendered.append(line)
+            continue
+
+        stripped = line.rstrip()
+        prefix, sep, remainder = stripped.partition(": ")
+        if not sep:
+            rendered.append(line)
+            continue
+
+        trailing_comma = ""
+        if remainder.endswith(","):
+            remainder = remainder[:-1]
+            trailing_comma = ","
+
+        if not (remainder.startswith('"') and remainder.endswith('"')):
+            rendered.append(line)
+            continue
+
+        try:
+            actual = json.loads(remainder)
+        except json.JSONDecodeError:
+            rendered.append(line)
+            continue
+
+        if not isinstance(actual, str) or "\n" not in actual:
+            rendered.append(line)
+            continue
+
+        base_indent = " " * (len(prefix) - len(prefix.lstrip()))
+        content_indent = base_indent + "  "
+        rendered.append(f"{prefix}: \"\"\"")
+        for part in actual.splitlines():
+            rendered.append(f"{content_indent}{part}")
+        rendered.append(f"{base_indent}\"\"\"{trailing_comma}")
+
+    return "\n".join(rendered)
+
+
 def format_results(results: Mapping[str, Any]) -> str:
     sections: list[str] = []
     for key in ("health", "stats", "chat", "generate", "embed"):
         if key in results:
-            pretty = json.dumps(results[key], indent=2, sort_keys=True, default=str)
-            sections.append(f"{key.upper()}\n{pretty}")
+            pretty = json.dumps(
+                results[key], indent=2, sort_keys=True, default=str, ensure_ascii=False
+            )
+            formatted = _format_multiline_strings(pretty)
+            sections.append(f"{key.upper()}\n{formatted}")
     return "\n\n".join(sections)

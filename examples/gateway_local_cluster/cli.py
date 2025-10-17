@@ -105,7 +105,10 @@ def run(
 
     if verbose:
         typer.echo(f"Gateway base URL: {result.gateway_base_url}")
-        typer.echo(f"Mock base URL: {result.mock_base_url}")
+        if result.ollama_base_urls:
+            typer.echo("Ollama backend URLs:")
+            for backend_url in result.ollama_base_urls:
+                typer.echo(f"  - {backend_url}")
 
     typer.echo(result.formatted())
 
