@@ -1362,6 +1362,275 @@ response = llm("What is quantum computing?")
 
 ---
 
+## 🏭 Production Deployment (Bare Metal)
+
+For teams preferring bare metal infrastructure over containers, SOLLOL provides systemd-based deployment for production environments.
+
+### **Multi-Node Bare Metal Setup**
+
+This setup assumes you have 3+ physical machines with Ollama installed. We'll configure SOLLOL as a centralized routing layer.
+
+#### **Architecture:**
+```
+┌─────────────────────────────────────────┐
+│   Central Router Machine (Control Plane│
+│   - SOLLOL Dashboard (port 8080)       │
+│   - Redis (port 6379)                  │
+│   - Optional: GPU reporter             │
+└────────────┬────────────────────────────┘
+             │ Auto-discovery via network
+             │ scan (ports 11434)
+     ┌───────┼──────────┬─────────────┐
+     ▼       ▼          ▼             ▼
+┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
+│ Node 1  │ │ Node 2  │ │ Node 3  │ │ Node N  │
+│ Ollama  │ │ Ollama  │ │ Ollama  │ │ Ollama  │
+│ :11434  │ │ :11434  │ │ :11434  │ │ :11434  │
+│ GPU 24GB│ │ GPU 16GB│ │ CPU 64c │ │ ...     │
+└─────────┘ └─────────┘ └─────────┘ └─────────┘
+```
+
+#### **Step 1: Install Ollama on each node**
+
+On each worker node (Node 1, 2, 3, ...):
+
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Start Ollama service
+sudo systemctl enable ollama
+sudo systemctl start ollama
+
+# Verify it's running
+curl http://localhost:11434/api/tags
+```
+
+#### **Step 2: Install SOLLOL on control plane machine**
+
+On your central router machine:
+
+```bash
+# Install SOLLOL and dependencies
+pip install sollol redis
+
+# Install Redis
+sudo apt-get install redis-server  # Ubuntu/Debian
+# OR
+sudo yum install redis              # RHEL/CentOS
+
+# Start Redis
+sudo systemctl enable redis
+sudo systemctl start redis
+```
+
+#### **Step 3: Create systemd service for SOLLOL Dashboard**
+
+Create `/etc/systemd/system/sollol-dashboard.service`:
+
+```ini
+[Unit]
+Description=SOLLOL Dashboard Service
+After=network.target redis.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=sollol  # Create dedicated user for security
+Group=sollol
+WorkingDirectory=/opt/sollol
+Environment="SOLLOL_DASHBOARD=true"
+Environment="SOLLOL_DASHBOARD_PORT=8080"
+Environment="REDIS_URL=redis://localhost:6379"
+ExecStart=/usr/bin/python3 -m sollol.dashboard_service --port 8080 --redis-url redis://localhost:6379
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo useradd -r -s /bin/false sollol  # Create dedicated user
+sudo mkdir -p /opt/sollol
+sudo chown sollol:sollol /opt/sollol
+
+sudo systemctl daemon-reload
+sudo systemctl enable sollol-dashboard
+sudo systemctl start sollol-dashboard
+
+# Verify
+sudo systemctl status sollol-dashboard
+curl http://localhost:8080/health
+```
+
+#### **Step 4: Install GPU reporters on nodes (optional but recommended)**
+
+On each GPU node for accurate VRAM monitoring:
+
+```bash
+# Install on each node with GPUs
+pip install sollol gpustat
+
+# Run GPU reporter (publishes to central Redis)
+sollol install-gpu-reporter --redis-host <control-plane-ip>
+
+# Example for node at 10.9.66.45
+sollol install-gpu-reporter --redis-host 10.9.66.154
+```
+
+Create `/etc/systemd/system/sollol-gpu-reporter.service` on each GPU node:
+
+```ini
+[Unit]
+Description=SOLLOL GPU Reporter
+After=network.target
+
+[Service]
+Type=simple
+User=sollol
+ExecStart=/usr/local/bin/sollol-gpu-reporter --redis-host <control-plane-ip> --interval 5
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### **Step 5: Configure firewall rules**
+
+On all nodes:
+
+```bash
+# Allow Ollama traffic (port 11434)
+sudo ufw allow 11434/tcp comment "Ollama API"
+
+# On control plane only: allow dashboard access
+sudo ufw allow 8080/tcp comment "SOLLOL Dashboard"
+sudo ufw allow 6379/tcp comment "Redis"  # Only from trusted nodes
+
+# Reload firewall
+sudo ufw reload
+```
+
+#### **Step 6: Test the deployment**
+
+From any machine with network access:
+
+```python
+from sollol import OllamaPool
+
+# SOLLOL auto-discovers all nodes via network scan
+pool = OllamaPool.auto_configure()
+
+# Verify nodes discovered
+stats = pool.get_stats()
+print(f"Discovered {stats['active_nodes']} nodes")
+
+# Make a test request
+response = pool.chat(
+    model="llama3.2",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+print(response['message']['content'])
+print(f"Routed to: {response['_sollol_routing']['host']}")
+```
+
+#### **Step 7: Monitor with systemd**
+
+```bash
+# Check dashboard status
+sudo systemctl status sollol-dashboard
+
+# View live logs
+sudo journalctl -u sollol-dashboard -f
+
+# Check GPU reporters
+sudo systemctl status sollol-gpu-reporter
+
+# View metrics
+curl http://localhost:8080/api/stats | jq
+```
+
+### **Production Hardening**
+
+#### **Security:**
+```bash
+# 1. Run SOLLOL as dedicated unprivileged user
+sudo useradd -r -s /bin/false sollol
+
+# 2. Configure Redis authentication
+sudo vi /etc/redis/redis.conf
+# Add: requirepass <strong-password>
+
+# 3. Use firewall to restrict access
+sudo ufw allow from 10.9.66.0/24 to any port 6379  # Redis from trusted subnet only
+sudo ufw allow from 10.9.66.0/24 to any port 8080  # Dashboard from trusted subnet
+```
+
+#### **High Availability:**
+```bash
+# Use systemd watchdog for automatic restart on crashes
+[Service]
+WatchdogSec=30
+Restart=always
+RestartSec=10
+```
+
+#### **Monitoring:**
+```bash
+# Integrate with Prometheus
+curl http://localhost:9090/metrics
+
+# Or use systemd monitoring
+systemctl status sollol-dashboard | grep "Active:"
+```
+
+### **Troubleshooting**
+
+**Nodes not discovered:**
+```bash
+# Check network connectivity
+for ip in 10.9.66.{1..255}; do
+    timeout 0.5 bash -c "cat < /dev/null > /dev/tcp/$ip/11434 2>/dev/null" && echo "$ip:11434 reachable"
+done
+
+# Check Ollama is listening on all interfaces (not just localhost)
+curl http://<node-ip>:11434/api/tags
+```
+
+**Dashboard not starting:**
+```bash
+# Check Redis is running
+systemctl status redis
+redis-cli ping  # Should return "PONG"
+
+# Check port not in use
+sudo lsof -i :8080
+
+# View detailed logs
+journalctl -u sollol-dashboard --since "10 minutes ago"
+```
+
+**Performance issues:**
+```bash
+# Check node health
+curl http://localhost:8080/api/stats | jq '.node_performance'
+
+# Monitor resource usage
+htop
+nvidia-smi  # On GPU nodes
+
+# Check network latency between nodes
+ping <node-ip>
+```
+
+---
+
 ## 📚 Documentation
 
 - **[Architecture Guide](ARCHITECTURE.md)** - Deep dive into system design
