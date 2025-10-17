@@ -1,0 +1,6 @@
+{
+  "_note": "Fixture for OllamaPool.generate; simple deterministic prompt for mock cluster tests.",
+  "model": "llama3.2",
+  "prompt": "State the status: ready.",
+  "stream": false
+}

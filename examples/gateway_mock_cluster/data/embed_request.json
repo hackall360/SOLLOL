@@ -1,0 +1,5 @@
+{
+  "_note": "Embedding payload used by OllamaPool.embed fixtures; short phrase keeps mock vectors stable.",
+  "model": "nomic-embed-text",
+  "input": "ready status token"
+}
