@@ -1,6 +1,8 @@
 """Command-line interface for the gateway local cluster example."""
 from __future__ import annotations
 
+from typing import Sequence
+
 import typer
 
 from .gateway_process import (
@@ -11,9 +13,29 @@ from .gateway_process import (
     run_gateway,
 )
 from .mock_ollama import run as run_mock_ollama
+from .model_setup import collect_requested_models, ensure_models, ModelSetupError
 from .run_demo import run_demo
 
 app = typer.Typer(help="Utilities for running the gateway local cluster demo")
+
+
+def _preload_models(
+    models: Sequence[str],
+    *,
+    timeout: float,
+    verbose: bool,
+) -> None:
+    if not models:
+        return
+
+    if verbose:
+        typer.echo("Ensuring required Ollama models are available: " + ", ".join(models))
+
+    try:
+        ensure_models(models, timeout=timeout)
+    except ModelSetupError as exc:
+        typer.secho(str(exc), fg="red")
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()
@@ -49,8 +71,24 @@ def run(
         "-v",
         help="Enable verbose output while running the demo.",
     ),
+    models: tuple[str, ...] = typer.Option(
+        (),
+        "--model",
+        "-m",
+        help="Name of an Ollama model to preload before starting services. Can be provided multiple times.",
+    ),
+    model_timeout: float = typer.Option(
+        300.0,
+        "--model-timeout",
+        min=1.0,
+        show_default=True,
+        help="Maximum seconds to wait for Ollama commands when preloading models.",
+    ),
 ) -> None:
     """Run the full demo with both the mock Ollama service and SOLLOL gateway."""
+
+    requested_models = collect_requested_models(models)
+    _preload_models(requested_models, timeout=model_timeout, verbose=verbose)
 
     if verbose:
         typer.echo(
@@ -149,8 +187,24 @@ def start_gateway(
         "-v",
         help="Enable verbose output before launching the gateway.",
     ),
+    models: tuple[str, ...] = typer.Option(
+        (),
+        "--model",
+        "-m",
+        help="Name of an Ollama model to preload before launching the gateway. Can be provided multiple times.",
+    ),
+    model_timeout: float = typer.Option(
+        300.0,
+        "--model-timeout",
+        min=1.0,
+        show_default=True,
+        help="Maximum seconds to wait for Ollama commands when preloading models.",
+    ),
 ) -> None:
     """Run only the SOLLOL gateway configured for the local cluster demo."""
+
+    requested_models = collect_requested_models(models)
+    _preload_models(requested_models, timeout=model_timeout, verbose=verbose)
 
     if verbose:
         typer.echo(
