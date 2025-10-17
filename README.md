@@ -42,7 +42,40 @@ SOLLOL provides:
 
 ---
 
-## 🚀 Quick Start
+## ⚡ Quickstart (3 Commands)
+
+```bash
+# 1. Install SOLLOL
+pip install sollol
+
+# 2. Start the dashboard (optional but recommended)
+python3 -m sollol.dashboard_service &
+
+# 3. Run your first query
+python3 -c "from sollol import OllamaPool; pool = OllamaPool.auto_configure(); print(pool.chat(model='llama3.2', messages=[{'role': 'user', 'content': 'Hello!'}])['message']['content'])"
+```
+
+**What just happened?**
+- ✅ SOLLOL auto-discovered all Ollama nodes on your network
+- ✅ Intelligently routed your request to the best available node
+- ✅ Dashboard live at `http://localhost:8080` (shows routing decisions, metrics, logs)
+
+**Expected output:**
+```
+Discovering Ollama nodes...
+Found 3 nodes: 10.9.66.45:11434, 10.9.66.154:11434, localhost:11434
+Selected node: 10.9.66.45:11434 (GPU, 12ms latency)
+Hello! How can I help you today?
+```
+
+**Next steps:**
+- Visit `http://localhost:8080` to see the dashboard
+- Check [Full Quick Start](#full-quick-start) for production setup
+- Read [Examples](#examples) for multi-agent, batch, and sharding patterns
+
+---
+
+## 🚀 Full Quick Start
 
 ### Installation
 

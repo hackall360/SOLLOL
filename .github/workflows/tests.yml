@@ -57,3 +57,47 @@ jobs:
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
+
+  integration-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+
+    - name: Start mock Ollama nodes
+      run: |
+        # Start 3 mock Ollama servers on different ports (avoid 11434 conflict)
+        python3 tests/integration/mock_ollama_server.py --port 21434 &
+        sleep 2
+        python3 tests/integration/mock_ollama_server.py --port 21435 &
+        sleep 2
+        python3 tests/integration/mock_ollama_server.py --port 21436 &
+        sleep 3
+        echo "Mock nodes started on ports 21434, 21435, 21436"
+
+    - name: Verify mock nodes are running
+      run: |
+        curl -f http://localhost:21434/api/tags || exit 1
+        curl -f http://localhost:21435/api/tags || exit 1
+        curl -f http://localhost:21436/api/tags || exit 1
+        echo "All mock nodes responding"
+
+    - name: Run SOLLOL integration test
+      run: |
+        python3 tests/integration/test_multi_node_routing.py
+      timeout-minutes: 5
+
+    - name: Cleanup
+      if: always()
+      run: |
+        pkill -f "mock_ollama_server" || true
