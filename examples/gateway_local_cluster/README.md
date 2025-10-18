@@ -32,10 +32,10 @@ examples.gateway_local_cluster.cli run`, and automatically:
 1. Ensures every model requested via `--model`, `OLLAMA_MODELS`, or the
    `MODEL_NAMES` environment variable is installed using the local `ollama`
    binary.
-2. Starts the SOLLOL gateway on `GATEWAY_PORT` (defaults to `18000`) and, unless
-   told otherwise, a mock Ollama FastAPI server on `MOCK_PORT` (`11434`).
-3. Launches real `ollama serve` processes when `NODES` is greater than zero,
-   offsetting their ports from `OLLAMA_PORT` so that you can mix mocks and real
+2. Starts the SOLLOL gateway on `GATEWAY_PORT` (defaults to `18000`) and a real
+   Ollama runtime on `OLLAMA_PORT` (`11434`).
+3. Launches additional `ollama serve` processes when `NODES` is greater than one,
+   offsetting their ports from `OLLAMA_PORT` so you can scale to multiple
    runtimes.
 4. Brings up Ray actors and Dask workers when `ENABLE_RAY` / `ENABLE_DASK`
    resolve to truthy values, mirroring the CLI toggles.
@@ -47,13 +47,13 @@ examples.gateway_local_cluster.cli run`, and automatically:
 | Variable | Effect | Default |
 | --- | --- | --- |
 | `GATEWAY_PORT` | Forwarded to `--gateway-port`. | `18000` |
-| `MOCK_PORT` / `OLLAMA_PORT` | Base port for mock Ollama and real runtimes. | `11434` |
+| `OLLAMA_PORT` | Port for the first real Ollama runtime. | `11434` |
 | `HOST` | Bind address used when starting services. | `127.0.0.1` |
 | `READINESS_TIMEOUT` | Seconds to wait for readiness checks. | `30` |
 | `VERBOSE` | Truthy values add `--verbose`. | unset |
 | `OLLAMA_MODELS` | Comma-separated list bridged to repeated `--model` flags. | unset |
 | `MODEL_NAMES` | Whitespace-delimited model list forwarded to `--model`. | unset |
-| `NODES` | Number of real Ollama runtimes to launch (`--nodes`). | `0` |
+| `NODES` | Number of real Ollama runtimes to launch (`--nodes`). | `1` |
 | `ENABLE_RAY` | Truthy values add `--enable-ray`, falsy adds `--disable-ray`. | unset |
 | `ENABLE_DASK` | Truthy values add `--enable-dask`, falsy adds `--disable-dask`. | unset |
 
@@ -105,8 +105,7 @@ GENERATE
 ```
 
 Model wording varies per run, but both chat and generate responses should
-complete quickly after the initial model load. If you only use the mock backend,
-`model` entries will show `mock-ollama` instead.
+complete quickly after the initial model load.
 
 ## Troubleshooting
 

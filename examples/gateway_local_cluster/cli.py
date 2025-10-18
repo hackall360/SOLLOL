@@ -96,12 +96,11 @@ def run(
         show_default=True,
         help="Port the SOLLOL gateway should listen on.",
     ),
-    ollama_port: int = typer.Option(
+    first_runtime_port: int = typer.Option(
         DEFAULT_OLLAMA_PORT,
         "--ollama-port",
-        "--mock-port",
         show_default=True,
-        help="Base port used for the first Ollama runtime.",
+        help="Port used for the first real Ollama runtime launched by the demo.",
     ),
     host: str = typer.Option(
         "127.0.0.1",
@@ -136,9 +135,9 @@ def run(
         help="Maximum seconds to wait for Ollama commands when preloading models.",
     ),
     node_count: int = typer.Option(
-        0,
+        1,
         "--nodes",
-        min=0,
+        min=1,
         show_default=True,
         help="Number of real Ollama runtimes to launch for the demo.",
     ),
@@ -181,26 +180,22 @@ def run(
     _preload_models(requested_models, timeout=model_timeout, verbose=verbose)
 
     runtime_configs: list[dict[str, object]] = []
-    if node_count > 0:
-        base_port = ollama_port
-        for index in range(node_count):
-            port_value = base_port + index
-            config: dict[str, object] = {"host": host, "port": port_value}
-            if requested_models:
-                config["ensure_models"] = requested_models
-                config["model_timeout"] = model_timeout
-            runtime_configs.append(config)
+    for index in range(node_count):
+        port_value = first_runtime_port + index
+        config: dict[str, object] = {"host": host, "port": port_value}
+        if requested_models:
+            config["ensure_models"] = requested_models
+            config["model_timeout"] = model_timeout
+        runtime_configs.append(config)
 
     if verbose:
         typer.echo(
-            "Starting demo with gateway on %s and base Ollama port %s"
-            % (gateway_port, ollama_port)
+            "Starting demo with gateway on %s and first Ollama runtime at %s:%s"
+            % (gateway_port, host, first_runtime_port)
         )
-        if runtime_configs:
-            typer.echo(
-                "Launching %d Ollama runtime(s) beginning at port %s"
-                % (len(runtime_configs), runtime_configs[0]["port"])
-            )
+        typer.echo(f"Launching {len(runtime_configs)} Ollama runtime(s):")
+        for config in runtime_configs:
+            typer.echo(f"  - {config['host']}:{config['port']}")
         typer.echo(
             "Ray: %s (workers=%d), Dask: %s (workers=%d)"
             % (
@@ -213,7 +208,7 @@ def run(
 
     result = run_demo(
         gateway_port=gateway_port,
-        ollama_port=ollama_port,
+        first_runtime_port=first_runtime_port,
         host=host,
         readiness_timeout=readiness_timeout,
         ollama_runtimes=runtime_configs or None,
@@ -460,12 +455,11 @@ def start_gateway(
         show_default=True,
         help="Port for the SOLLOL gateway.",
     ),
-    ollama_port: int = typer.Option(
+    first_runtime_port: int = typer.Option(
         DEFAULT_OLLAMA_PORT,
         "--ollama-port",
-        "--mock-port",
         show_default=True,
-        help="Port used to reach the primary Ollama runtime.",
+        help="Port used to reach the first real Ollama runtime.",
     ),
     enable_batch_processing: bool = typer.Option(
         True,
@@ -525,12 +519,12 @@ def start_gateway(
     if verbose:
         typer.echo(
             "Starting SOLLOL gateway on %s targeting Ollama on %s"
-            % (gateway_port, ollama_port)
+            % (gateway_port, first_runtime_port)
         )
 
     run_gateway(
         gateway_port=gateway_port,
-        ollama_port=ollama_port,
+        ollama_port=first_runtime_port,
         enable_batch_processing=enable_batch_processing,
         ray_workers=ray_workers,
         dask_workers=dask_workers,
