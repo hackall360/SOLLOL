@@ -74,13 +74,13 @@ def test_gateway_local_cluster_end_to_end(
 ) -> None:
     host = "127.0.0.1"
     gateway_port = _allocate_port(host)
-    mock_port = _allocate_port(host)
+    ollama_port = _allocate_port(host)
     gateway_base = f"http://{host}:{gateway_port}"
-    mock_base = f"http://{host}:{mock_port}"
+    ollama_base = f"http://{host}:{ollama_port}"
 
     def mock_ready(*, timeout: float, **_: object) -> None:
-        process_utils.wait_for_port(host, mock_port, timeout=timeout)
-        process_utils.poll_endpoint(f"{mock_base}/", timeout=timeout)
+        process_utils.wait_for_port(host, ollama_port, timeout=timeout)
+        process_utils.poll_endpoint(f"{ollama_base}/", timeout=timeout)
 
     def gateway_ready(*, timeout: float, **_: object) -> None:
         process_utils.wait_for_port(host, gateway_port, timeout=timeout)
@@ -89,7 +89,7 @@ def test_gateway_local_cluster_end_to_end(
     register_process(
         process_utils.start_mock_server(
             run_mock_ollama,
-            kwargs={"port": mock_port},
+            kwargs={"port": ollama_port},
             name="mock_ollama",
             readiness_check=mock_ready,
             readiness_timeout=180.0,
@@ -102,7 +102,7 @@ def test_gateway_local_cluster_end_to_end(
             run_gateway,
             kwargs={
                 "gateway_port": gateway_port,
-                "mock_port": mock_port,
+                "ollama_port": ollama_port,
                 "enable_batch_processing": False,
                 "ray_workers": 0,
                 "dask_workers": 0,

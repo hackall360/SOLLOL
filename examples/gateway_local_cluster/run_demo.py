@@ -10,17 +10,14 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 from . import client
 from .gateway_process import (
     DEFAULT_GATEWAY_PORT,
-    DEFAULT_MOCK_OLLAMA_PORT,
+    DEFAULT_OLLAMA_PORT,
     launch_gateway,
 )
 from .model_setup import ensure_model
-from .mock_ollama import run as run_mock_ollama
 from .process_utils import (
     format_ollama_nodes,
     poll_endpoint,
-    start_mock_server,
     start_ollama_runtime,
-    wait_for_port,
 )
 
 
@@ -70,49 +67,29 @@ def _load_payloads() -> dict[str, Mapping[str, Any]]:
 def run_demo(
     *,
     gateway_port: int = DEFAULT_GATEWAY_PORT,
-    mock_port: int = DEFAULT_MOCK_OLLAMA_PORT,
+    ollama_port: int = DEFAULT_OLLAMA_PORT,
     host: str = "127.0.0.1",
     readiness_timeout: float = 30.0,
     ollama_runtimes: Sequence[Mapping[str, Any]] | None = None,
     gateway_ollama_nodes: Sequence[Mapping[str, Any]] | None = None,
-    use_mock_backend: bool = True,
     enable_ray: Optional[bool] = None,
     enable_dask: Optional[bool] = None,
     ray_workers: Optional[int] = None,
     dask_workers: Optional[int] = None,
     enable_batch_processing: Optional[bool] = None,
 ) -> DemoResult:
-    """Run the mock Ollama + SOLLOL gateway demo and return captured responses."""
+    """Run the SOLLOL gateway demo backed by real Ollama runtimes."""
 
     payloads = _load_payloads()
     gateway_base_url = f"http://{host}:{gateway_port}"
 
-    if not use_mock_backend and not ollama_runtimes and not gateway_ollama_nodes:
-        raise ValueError(
-            "No Ollama backends configured; enable the mock backend or provide runtime/node definitions."
-        )
-
     with ExitStack() as stack:
         started_nodes: list[dict[str, Any]] = []
 
-        if use_mock_backend:
-            mock_base_url = f"http://{host}:{mock_port}"
+        runtime_entries = list(ollama_runtimes or [{"host": host, "port": ollama_port}])
+        if not runtime_entries:
+            raise ValueError("At least one Ollama runtime configuration is required for the demo")
 
-            def _mock_readiness_check(*, timeout: float, **_kwargs: Any) -> None:
-                wait_for_port(host, mock_port, timeout=timeout)
-                poll_endpoint(f"{mock_base_url}/api/health", timeout=timeout)
-
-            mock_handle = start_mock_server(
-                run_mock_ollama,
-                kwargs={"argv": ["--host", host, "--port", str(mock_port)]},
-                name="mock_ollama",
-                readiness_check=_mock_readiness_check,
-                readiness_timeout=readiness_timeout,
-            )
-            stack.enter_context(mock_handle)
-            started_nodes.append({"host": host, "port": int(mock_port)})
-
-        runtime_entries: Sequence[Mapping[str, Any]] = ollama_runtimes or ()
         for index, runtime_config in enumerate(runtime_entries):
             config = dict(runtime_config)
 
@@ -146,7 +123,7 @@ def run_demo(
                 ensure_model(model_name, timeout=ensure_timeout)
                 seen_models.add(model_name)
 
-            default_port = mock_port + index if index else mock_port
+            default_port = ollama_port + index
             host_value = str(config.get("host", host))
             port_value = int(config.get("port", default_port))
             config.setdefault("host", host_value)
@@ -170,14 +147,14 @@ def run_demo(
         formatted_nodes = format_ollama_nodes(
             combined_nodes or None,
             default_host=host,
-            default_port=mock_port,
+            default_port=ollama_port,
         )
 
         unique_nodes: list[dict[str, Any]] = []
         seen_pairs: set[tuple[str, int]] = set()
         for node in formatted_nodes:
             resolved_host = str(node.get("host", host))
-            resolved_port = int(node.get("port", mock_port))
+            resolved_port = int(node.get("port", ollama_port))
             marker = (resolved_host, resolved_port)
             if marker in seen_pairs:
                 continue
@@ -186,7 +163,7 @@ def run_demo(
 
         gateway_handle = launch_gateway(
             gateway_port=gateway_port,
-            mock_port=mock_port,
+            ollama_port=ollama_port,
             readiness_timeout=readiness_timeout,
             ollama_nodes=unique_nodes,
             enable_ray=enable_ray,
