@@ -21,10 +21,24 @@ Environment variables map to the CLI flags exposed by `python -m examples.gatewa
 | Environment variable | Description | Default |
 | --- | --- | --- |
 | `GATEWAY_PORT` | Gateway listener forwarded to `--gateway-port`. | 18000 |
-| `MOCK_PORT` | Mock Ollama listener forwarded to `--mock-port`. | 11434 |
+| `MOCK_PORT` | Mock Ollama listener forwarded to `--mock-port` (alias of `--ollama-port`). | 11434 |
+| `OLLAMA_PORT` | Alternate way to set the base port used when starting runtimes. | unset |
 | `HOST` | Hostname passed via `--host`. | `127.0.0.1` |
 | `READINESS_TIMEOUT` | Seconds supplied to `--readiness-timeout`. | 30 |
 | `VERBOSE` | When set to `1`, `true`, `yes`, or `on`, adds `--verbose`. | unset |
+| `NODES` | When provided, forwards to `--nodes` so multiple Ollama runtimes can be spawned. | unset |
+| `ENABLE_RAY` | Accepts `true`/`false` values mirroring `--enable-ray/--disable-ray`. | unset |
+| `ENABLE_DASK` | Accepts `true`/`false` values mirroring `--enable-dask/--disable-dask`. | unset |
+
+### Helpful CLI commands
+
+In addition to `run`, the Typer CLI bundled with this example provides a few targeted helpers:
+
+- `python -m examples.gateway_local_cluster prepare-models -m llama3.2`: downloads required Ollama models ahead of time using the `ollama` CLI so that subsequent runs do not block on pulls.
+- `python -m examples.gateway_local_cluster start-ollama --nodes 2`: spawns one or more real `ollama serve` processes using consecutive ports (defaults to `127.0.0.1:11434`).
+- `python -m examples.gateway_local_cluster status --include-stats`: pings `/api/health` and `/api/stats` to report gateway readiness and summarize which Ollama nodes are active.
+
+The `run` command now accepts `--nodes`, `--enable-ray/--disable-ray`, and `--enable-dask/--disable-dask` flags to tailor the size of the local cluster. Combine them with `--ollama-port` to adjust the base port used when spawning runtimes.
 
 If you are running inside a restricted container, consider exporting `SOLLOL_DASK_WORKERS=0` before invoking the script to disable optional Dask batch workers that may not be able to fork child processes.
 
