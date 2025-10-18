@@ -87,7 +87,7 @@ def test_gateway_local_cluster_end_to_end(
         process_utils.poll_endpoint(f"{gateway_base}/api/health", timeout=timeout)
 
     register_process(
-        process_utils.start_mock_server(
+        process_utils.start_background_process(
             run_mock_ollama,
             kwargs={"port": ollama_port},
             name="mock_ollama",
@@ -98,7 +98,7 @@ def test_gateway_local_cluster_end_to_end(
     )
 
     register_process(
-        process_utils.start_mock_server(
+        process_utils.start_background_process(
             run_gateway,
             kwargs={
                 "gateway_port": gateway_port,

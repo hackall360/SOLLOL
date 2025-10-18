@@ -115,7 +115,7 @@ def start_background_process(
     readiness_timeout: float = 30.0,
     daemon: bool = True,
 ) -> ManagedProcess:
-    """Launch a callable in a ``multiprocessing.Process`` and manage its life-cycle."""
+    """Start ``target`` in a managed background process for demos or tests."""
 
     process = Process(target=target, args=tuple(args or ()), kwargs=dict(kwargs or {}), daemon=daemon)
     process.start()
@@ -124,27 +124,8 @@ def start_background_process(
     return handle
 
 
-def start_mock_server(
-    target: Callable[..., Any],
-    *,
-    args: Optional[Iterable[Any]] = None,
-    kwargs: Optional[Mapping[str, Any]] = None,
-    name: str = "mock_server",
-    readiness_check: Optional[Callable[..., Any]] = None,
-    readiness_timeout: float = 30.0,
-    daemon: bool = True,
-) -> ManagedProcess:
-    """Backward compatible wrapper for :func:`start_background_process`."""
-
-    return start_background_process(
-        target,
-        args=args,
-        kwargs=kwargs,
-        name=name,
-        readiness_check=readiness_check,
-        readiness_timeout=readiness_timeout,
-        daemon=daemon,
-    )
+# Backwards compatibility alias; remove once downstream callers migrate.
+start_mock_server = start_background_process
 
 
 def start_subprocess(
