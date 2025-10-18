@@ -43,12 +43,10 @@ if [[ -n "${GATEWAY_PORT:-}" ]]; then
   CLI_ARGS+=("--gateway-port" "${GATEWAY_PORT}")
 fi
 
-if [[ -n "${MOCK_PORT:-}" ]]; then
-  CLI_ARGS+=("--mock-port" "${MOCK_PORT}")
-fi
-
 if [[ -n "${OLLAMA_PORT:-}" ]]; then
   CLI_ARGS+=("--ollama-port" "${OLLAMA_PORT}")
+elif [[ -n "${MOCK_PORT:-}" ]]; then
+  CLI_ARGS+=("--ollama-port" "${MOCK_PORT}")
 fi
 
 if [[ -n "${HOST:-}" ]]; then

@@ -67,7 +67,7 @@ def _load_payloads() -> dict[str, Mapping[str, Any]]:
 def run_demo(
     *,
     gateway_port: int = DEFAULT_GATEWAY_PORT,
-    ollama_port: int = DEFAULT_OLLAMA_PORT,
+    first_runtime_port: int = DEFAULT_OLLAMA_PORT,
     host: str = "127.0.0.1",
     readiness_timeout: float = 30.0,
     ollama_runtimes: Sequence[Mapping[str, Any]] | None = None,
@@ -86,7 +86,7 @@ def run_demo(
     with ExitStack() as stack:
         started_nodes: list[dict[str, Any]] = []
 
-        runtime_entries = list(ollama_runtimes or [{"host": host, "port": ollama_port}])
+        runtime_entries = list(ollama_runtimes or [{"host": host, "port": first_runtime_port}])
         if not runtime_entries:
             raise ValueError("At least one Ollama runtime configuration is required for the demo")
 
@@ -123,7 +123,7 @@ def run_demo(
                 ensure_model(model_name, timeout=ensure_timeout)
                 seen_models.add(model_name)
 
-            default_port = ollama_port + index
+            default_port = first_runtime_port + index
             host_value = str(config.get("host", host))
             port_value = int(config.get("port", default_port))
             config.setdefault("host", host_value)
@@ -147,14 +147,14 @@ def run_demo(
         formatted_nodes = format_ollama_nodes(
             combined_nodes or None,
             default_host=host,
-            default_port=ollama_port,
+            default_port=first_runtime_port,
         )
 
         unique_nodes: list[dict[str, Any]] = []
         seen_pairs: set[tuple[str, int]] = set()
         for node in formatted_nodes:
             resolved_host = str(node.get("host", host))
-            resolved_port = int(node.get("port", ollama_port))
+            resolved_port = int(node.get("port", first_runtime_port))
             marker = (resolved_host, resolved_port)
             if marker in seen_pairs:
                 continue
@@ -163,7 +163,7 @@ def run_demo(
 
         gateway_handle = launch_gateway(
             gateway_port=gateway_port,
-            ollama_port=ollama_port,
+            ollama_port=first_runtime_port,
             readiness_timeout=readiness_timeout,
             ollama_nodes=unique_nodes,
             enable_ray=enable_ray,
