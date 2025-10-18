@@ -1,114 +1,140 @@
 # Gateway Local Cluster Demo
 
-The gateway local cluster example illustrates how to spin up a miniature SOLLOL deployment on a single workstation.  It shows how the SOLLOL gateway coordinates mock Ollama nodes, Ray actors, and optional Dask batch workers so that you can rehearse load-balancing behavior before touching production infrastructure.
+Spin up a miniature SOLLOL deployment on a single workstation to rehearse gateway
+coordination against real Ollama runtimes. The helper script in this directory
+installs models on demand, starts optional Ray and Dask services, and prints the
+formatted responses that the validation client receives from the gateway.
 
 ## Prerequisites
-- Python 3.9+ with the SOLLOL package installed in editable mode (`pip install -e .`).
-- Access to the repository root so you can run `python -m sollol.cli` commands.
-- (Optional) Local Ollama runtimes or lightweight HTTP mocks that respond like Ollama nodes for realism.
-- Redis server available when testing GPU monitoring flows (defaults to `localhost:6379`).
 
-## Quickstart Script
+| Requirement | Why it matters | Verification command |
+| --- | --- | --- |
+| [Ollama CLI](https://ollama.com/download) 0.1.30 or newer | Required to pull models and launch real runtimes with `ollama serve`. | `ollama --version` |
+| Python 3.9+ with SOLLOL installed in editable mode | Provides the `examples.gateway_local_cluster` Typer CLI. | `pip install -e .[dev]` |
+| Redis (optional) | Needed only when you want to showcase GPU monitoring flows. | `redis-cli ping` |
+| Docker Desktop / Docker Engine (optional) | Simplifies running Ray and Dask in containers instead of locally. | `docker version` |
+| Ray + Dask (optional) | Demonstrate distributed batching from the gateway. Both stacks are installed via `pip install -e .[dev]`. | `ray --version`, `dask-scheduler --version` |
 
-An executable helper, [`run.sh`](./run.sh), orchestrates the full loop: it spawns the mock Ollama server, launches the SOLLOL gateway, runs the validation client, and then shuts everything down cleanly. From the repository root run:
+> **Tip:** The CLI automatically honours `OLLAMA_MODELS` and other environment
+> variables, so you can preconfigure model downloads across terminal sessions.
+
+## Automatic setup with `run.sh`
+
+From the repository root execute:
 
 ```bash
 ./examples/gateway_local_cluster/run.sh
 ```
 
-Environment variables map to the CLI flags exposed by `python -m examples.gateway_local_cluster run`:
+The wrapper exports `src/` onto `PYTHONPATH`, calls `python -m
+examples.gateway_local_cluster.cli run`, and automatically:
 
-| Environment variable | Description | Default |
+1. Ensures every model requested via `--model`, `OLLAMA_MODELS`, or the
+   `MODEL_NAMES` environment variable is installed using the local `ollama`
+   binary.
+2. Starts the SOLLOL gateway on `GATEWAY_PORT` (defaults to `18000`) and, unless
+   told otherwise, a mock Ollama FastAPI server on `MOCK_PORT` (`11434`).
+3. Launches real `ollama serve` processes when `NODES` is greater than zero,
+   offsetting their ports from `OLLAMA_PORT` so that you can mix mocks and real
+   runtimes.
+4. Brings up Ray actors and Dask workers when `ENABLE_RAY` / `ENABLE_DASK`
+   resolve to truthy values, mirroring the CLI toggles.
+5. Runs the validation client and prints a health, chat, and generate summary
+   before tearing everything down.
+
+### Key environment variables
+
+| Variable | Effect | Default |
 | --- | --- | --- |
-| `GATEWAY_PORT` | Gateway listener forwarded to `--gateway-port`. | 18000 |
-| `MOCK_PORT` | Mock Ollama listener forwarded to `--mock-port` (alias of `--ollama-port`). | 11434 |
-| `OLLAMA_PORT` | Alternate way to set the base port used when starting runtimes. | unset |
-| `HOST` | Hostname passed via `--host`. | `127.0.0.1` |
-| `READINESS_TIMEOUT` | Seconds supplied to `--readiness-timeout`. | 30 |
-| `VERBOSE` | When set to `1`, `true`, `yes`, or `on`, adds `--verbose`. | unset |
-| `NODES` | When provided, forwards to `--nodes` so multiple Ollama runtimes can be spawned. | unset |
-| `ENABLE_RAY` | Accepts `true`/`false` values mirroring `--enable-ray/--disable-ray`. | unset |
-| `ENABLE_DASK` | Accepts `true`/`false` values mirroring `--enable-dask/--disable-dask`. | unset |
+| `GATEWAY_PORT` | Forwarded to `--gateway-port`. | `18000` |
+| `MOCK_PORT` / `OLLAMA_PORT` | Base port for mock Ollama and real runtimes. | `11434` |
+| `HOST` | Bind address used when starting services. | `127.0.0.1` |
+| `READINESS_TIMEOUT` | Seconds to wait for readiness checks. | `30` |
+| `VERBOSE` | Truthy values add `--verbose`. | unset |
+| `OLLAMA_MODELS` | Comma-separated list bridged to repeated `--model` flags. | unset |
+| `MODEL_NAMES` | Whitespace-delimited model list forwarded to `--model`. | unset |
+| `NODES` | Number of real Ollama runtimes to launch (`--nodes`). | `0` |
+| `ENABLE_RAY` | Truthy values add `--enable-ray`, falsy adds `--disable-ray`. | unset |
+| `ENABLE_DASK` | Truthy values add `--enable-dask`, falsy adds `--disable-dask`. | unset |
 
-### Helpful CLI commands
+All other CLI switches remain available; you can extend the invocation by
+modifying `CLI_ARGS` inside the script or by calling the module directly:
 
-In addition to `run`, the Typer CLI bundled with this example provides a few targeted helpers:
+```bash
+PYTHONPATH=src python -m examples.gateway_local_cluster.cli run --help
+```
 
-- `python -m examples.gateway_local_cluster prepare-models -m llama3.2`: downloads required Ollama models ahead of time using the `ollama` CLI so that subsequent runs do not block on pulls.
-- `python -m examples.gateway_local_cluster start-ollama --nodes 2`: spawns one or more real `ollama serve` processes using consecutive ports (defaults to `127.0.0.1:11434`).
-- `python -m examples.gateway_local_cluster status --include-stats`: pings `/api/health` and `/api/stats` to report gateway readiness and summarize which Ollama nodes are active.
+## Expected output with real Ollama models
 
-The `run` command now accepts `--nodes`, `--enable-ray/--disable-ray`, and `--enable-dask/--disable-dask` flags to tailor the size of the local cluster. Combine them with `--ollama-port` to adjust the base port used when spawning runtimes.
-
-If you are running inside a restricted container, consider exporting `SOLLOL_DASK_WORKERS=0` before invoking the script to disable optional Dask batch workers that may not be able to fork child processes.
-
-The script prints the formatted payload summaries emitted by `client.format_results`. Abridged output looks like:
+When `ollama serve` is available and `NODES` is non-zero, the demo streams
+responses from real models. The following excerpt shows truncated output from a
+run with `OLLAMA_MODELS=llama3,phi3` and `NODES=2`:
 
 ```
 HEALTH
 {
   "service": "SOLLOL",
   "status": "healthy",
+  "task_distribution": {
+    "ollama_nodes": 2,
+    "description": "Load balance across Ollama nodes",
+    "enabled": true
+  },
   "ray_parallel_execution": {
     "actors": 2,
-    "enabled": true,
-    "description": "Ray actors for concurrent request handling"
-  },
-  "task_distribution": {
-    "enabled": true,
-    "ollama_nodes": 1,
-    "description": "Load balance across Ollama nodes"
-  },
-  ...
+    "enabled": true
+  }
 }
 
 CHAT
 {
   "done": true,
   "message": {
-    "content": "Sea otters wrap themselves in kelp to nap safely.",
-    "role": "assistant"
+    "role": "assistant",
+    "content": "Sea otters wrap themselves in kelp so currents do not carry them away while sleeping."
   },
-  "model": "llama3.2"
+  "model": "llama3"
 }
 
 GENERATE
 {
   "done": true,
-  "model": "llama3.2",
-  "response": "- Minimize interruptions by silencing notifications.\n- Take short breaks to reset your focus."
+  "model": "phi3",
+  "response": "- Silence notifications to protect focus.\n- Take quick breaks to reset your energy."
 }
 ```
 
-## Manual Run Outline
-1. **Prepare environment**
-   - Activate your virtual environment and install dependencies with `pip install -e .[dev]` if you plan to hack on the code.
-   - Export any environment variables your mock Ollama services require.
-2. **Launch mock backends**
-   - Start local Ollama instances or lightweight HTTP mocks that mimic `/api/generate` and `/api/chat` endpoints.
-   - (Optional) Start llama.cpp RPC servers to demonstrate sharding.
-3. **Start the gateway**
-   - From the repository root run:
-     ```bash
-     python -m sollol.cli up \
-       --port 18000 \
-       --ray-workers 2 \
-       --dask-workers 1 \
-       --ollama-nodes "127.0.0.1:11434,127.0.0.1:21434"
-     ```
-   - Adjust flags (see above) to emphasize the behavior you want to demo.
-4. **Interact with the local cluster**
-   - Send sample requests to `http://localhost:18000/api/chat` or `.../api/generate` and observe routing decisions in the logs.
-   - Inspect Ray and Dask dashboards if they are running to highlight task distribution.
-5. **Extend the scenario**
-   - Toggle `--no-batch-processing` or change `--rpc-backends` to showcase different modes.
+Model wording varies per run, but both chat and generate responses should
+complete quickly after the initial model load. If you only use the mock backend,
+`model` entries will show `mock-ollama` instead.
 
-## Cleanup Outline
-1. Stop the SOLLOL gateway process (Ctrl+C in the terminal running `sollol up`).
-2. Terminate Ray and Dask workers if they continue running:
-   ```bash
-   pkill -f "ray::"
-   pkill -f "dask"
-   ```
-3. Shut down mock Ollama services and llama.cpp RPC servers.
-4. (Optional) Stop Redis if you launched a dedicated instance for monitoring.
+## Troubleshooting
+
+- **`ollama` command not found.** Ensure the Ollama CLI is installed and on your
+  `PATH`. On macOS this typically means launching the Ollama app once; on Linux
+  install the `.deb`/`.rpm` or extract the tarball, then verify with
+  `which ollama`. Update `PATH` or symlink the binary if you are running from a
+  container.
+- **Slow model pulls or repeated downloads.** Large models can take several
+  minutes on first run. Pre-pull them with `ollama pull <model>` or run
+  `python -m examples.gateway_local_cluster.cli prepare-models -m <model>`.
+  The CLI caches models in `~/.ollama/models`, so subsequent runs reuse them.
+- **Ray or Dask fail to start.** Set `ENABLE_RAY=0` or `ENABLE_DASK=0` to skip
+  those subsystems when running in constrained containers. For Docker-based
+  demos, confirm the Docker daemon is running and that ports `8265` (Ray) and
+  `8787` (Dask) are free.
+- **Gateway waits indefinitely for readiness.** Increase `READINESS_TIMEOUT` or
+  check that the selected ports are not occupied by other services.
+
+## Manual workflow
+
+Prefer to launch each component yourself? The Typer CLI contains additional
+commands:
+
+- `python -m examples.gateway_local_cluster.cli prepare-models -m llama3`
+- `python -m examples.gateway_local_cluster.cli start-ollama --nodes 2`
+- `python -m examples.gateway_local_cluster.cli status --include-stats`
+
+Combine these commands with direct `curl` requests to
+`http://localhost:18000/api/chat` to explore gateway behaviour before rolling
+changes into shared infrastructure.
