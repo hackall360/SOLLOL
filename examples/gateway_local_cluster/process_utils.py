@@ -105,6 +105,25 @@ def _invoke_readiness_check(
     readiness_check()
 
 
+def start_background_process(
+    target: Callable[..., Any],
+    *,
+    args: Optional[Iterable[Any]] = None,
+    kwargs: Optional[Mapping[str, Any]] = None,
+    name: str = "background_process",
+    readiness_check: Optional[Callable[..., Any]] = None,
+    readiness_timeout: float = 30.0,
+    daemon: bool = True,
+) -> ManagedProcess:
+    """Launch a callable in a ``multiprocessing.Process`` and manage its life-cycle."""
+
+    process = Process(target=target, args=tuple(args or ()), kwargs=dict(kwargs or {}), daemon=daemon)
+    process.start()
+    handle = ManagedProcess(process=process, name=name)
+    _invoke_readiness_check(readiness_check, timeout=readiness_timeout, handle=handle)
+    return handle
+
+
 def start_mock_server(
     target: Callable[..., Any],
     *,
@@ -115,12 +134,17 @@ def start_mock_server(
     readiness_timeout: float = 30.0,
     daemon: bool = True,
 ) -> ManagedProcess:
-    """Launch a callable in a ``multiprocessing.Process`` and manage its life-cycle."""
-    process = Process(target=target, args=tuple(args or ()), kwargs=dict(kwargs or {}), daemon=daemon)
-    process.start()
-    handle = ManagedProcess(process=process, name=name)
-    _invoke_readiness_check(readiness_check, timeout=readiness_timeout, handle=handle)
-    return handle
+    """Backward compatible wrapper for :func:`start_background_process`."""
+
+    return start_background_process(
+        target,
+        args=args,
+        kwargs=kwargs,
+        name=name,
+        readiness_check=readiness_check,
+        readiness_timeout=readiness_timeout,
+        daemon=daemon,
+    )
 
 
 def start_subprocess(

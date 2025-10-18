@@ -12,7 +12,7 @@ from sollol import SOLLOL
 from .process_utils import (
     ManagedProcess,
     format_ollama_nodes,
-    start_mock_server,
+    start_background_process,
     start_sollol_gateway,
     wait_for_port,
 )
@@ -56,8 +56,6 @@ def _resolve_gateway_config(
     )
 
     env_ollama_port = os.getenv("OLLAMA_PORT")
-    if env_ollama_port is None:
-        env_ollama_port = os.getenv("MOCK_OLLAMA_PORT")
 
     resolved_ollama_port = (
         ollama_port
@@ -166,7 +164,7 @@ def launch_gateway(
     def _readiness_check(*, timeout: float, **_kwargs) -> None:
         wait_for_port("127.0.0.1", config.port, timeout=timeout)
 
-    return start_mock_server(
+    return start_background_process(
         run_gateway,
         kwargs={
             "gateway_port": gateway_port,
