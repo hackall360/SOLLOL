@@ -12,7 +12,7 @@ from . import client
 from .gateway_process import (
     DEFAULT_DASK_WORKERS,
     DEFAULT_GATEWAY_PORT,
-    DEFAULT_MOCK_OLLAMA_PORT,
+    DEFAULT_OLLAMA_PORT,
     DEFAULT_RAY_WORKERS,
     run_gateway,
 )
@@ -97,11 +97,11 @@ def run(
         help="Port the SOLLOL gateway should listen on.",
     ),
     ollama_port: int = typer.Option(
-        DEFAULT_MOCK_OLLAMA_PORT,
+        DEFAULT_OLLAMA_PORT,
         "--ollama-port",
         "--mock-port",
         show_default=True,
-        help="Base port used for mock services or the first Ollama runtime.",
+        help="Base port used for the first Ollama runtime.",
     ),
     host: str = typer.Option(
         "127.0.0.1",
@@ -174,12 +174,6 @@ def run(
         show_default=True,
         help="Toggle batch processing support in the gateway.",
     ),
-    use_mock_backend: bool = typer.Option(
-        True,
-        "--use-mock/--no-mock",
-        show_default=True,
-        help="Launch the built-in FastAPI mock Ollama service alongside the gateway.",
-    ),
 ) -> None:
     """Run the full demo with configurable Ollama backends and SOLLOL gateway."""
 
@@ -188,7 +182,7 @@ def run(
 
     runtime_configs: list[dict[str, object]] = []
     if node_count > 0:
-        base_port = ollama_port if not use_mock_backend else ollama_port + 1
+        base_port = ollama_port
         for index in range(node_count):
             port_value = base_port + index
             config: dict[str, object] = {"host": host, "port": port_value}
@@ -219,11 +213,10 @@ def run(
 
     result = run_demo(
         gateway_port=gateway_port,
-        mock_port=ollama_port,
+        ollama_port=ollama_port,
         host=host,
         readiness_timeout=readiness_timeout,
         ollama_runtimes=runtime_configs or None,
-        use_mock_backend=use_mock_backend,
         enable_ray=enable_ray,
         enable_dask=enable_dask,
         ray_workers=ray_workers,
@@ -289,7 +282,7 @@ def start_ollama(
         help="Host interface to bind the Ollama runtime(s) to.",
     ),
     port: int = typer.Option(
-        DEFAULT_MOCK_OLLAMA_PORT,
+        DEFAULT_OLLAMA_PORT,
         "--port",
         show_default=True,
         help="Starting port for launched Ollama runtimes.",
@@ -467,11 +460,12 @@ def start_gateway(
         show_default=True,
         help="Port for the SOLLOL gateway.",
     ),
-    mock_port: int = typer.Option(
-        DEFAULT_MOCK_OLLAMA_PORT,
+    ollama_port: int = typer.Option(
+        DEFAULT_OLLAMA_PORT,
+        "--ollama-port",
         "--mock-port",
         show_default=True,
-        help="Port used to reach the mock Ollama server.",
+        help="Port used to reach the primary Ollama runtime.",
     ),
     enable_batch_processing: bool = typer.Option(
         True,
@@ -530,13 +524,13 @@ def start_gateway(
 
     if verbose:
         typer.echo(
-            "Starting SOLLOL gateway on %s targeting mock server on %s"
-            % (gateway_port, mock_port)
+            "Starting SOLLOL gateway on %s targeting Ollama on %s"
+            % (gateway_port, ollama_port)
         )
 
     run_gateway(
         gateway_port=gateway_port,
-        mock_port=mock_port,
+        ollama_port=ollama_port,
         enable_batch_processing=enable_batch_processing,
         ray_workers=ray_workers,
         dask_workers=dask_workers,

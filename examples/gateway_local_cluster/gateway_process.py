@@ -19,7 +19,7 @@ from .process_utils import (
 
 
 DEFAULT_GATEWAY_PORT = 18000
-DEFAULT_MOCK_OLLAMA_PORT = 11434
+DEFAULT_OLLAMA_PORT = 11434
 DEFAULT_RAY_WORKERS = 2
 DEFAULT_DASK_WORKERS = 1
 
@@ -43,7 +43,7 @@ class _GatewayLaunchConfig:
 def _resolve_gateway_config(
     *,
     gateway_port: Optional[int],
-    mock_port: Optional[int],
+    ollama_port: Optional[int],
     enable_batch_processing: Optional[bool],
     ray_workers: Optional[int],
     dask_workers: Optional[int],
@@ -54,8 +54,15 @@ def _resolve_gateway_config(
     resolved_gateway_port = gateway_port if gateway_port is not None else int(
         os.getenv("SOLLOL_GATEWAY_PORT", DEFAULT_GATEWAY_PORT)
     )
-    resolved_mock_port = mock_port if mock_port is not None else int(
-        os.getenv("MOCK_OLLAMA_PORT", DEFAULT_MOCK_OLLAMA_PORT)
+
+    env_ollama_port = os.getenv("OLLAMA_PORT")
+    if env_ollama_port is None:
+        env_ollama_port = os.getenv("MOCK_OLLAMA_PORT")
+
+    resolved_ollama_port = (
+        ollama_port
+        if ollama_port is not None
+        else int(env_ollama_port) if env_ollama_port is not None else DEFAULT_OLLAMA_PORT
     )
 
     ray_enabled = enable_ray if enable_ray is not None else _bool_from_env("SOLLOL_ENABLE_RAY", True)
@@ -84,7 +91,7 @@ def _resolve_gateway_config(
     resolved_nodes = format_ollama_nodes(
         ollama_nodes,
         default_host="127.0.0.1",
-        default_port=resolved_mock_port,
+        default_port=resolved_ollama_port,
     )
 
     return _GatewayLaunchConfig(
@@ -99,7 +106,7 @@ def _resolve_gateway_config(
 def run_gateway(
     *,
     gateway_port: Optional[int] = None,
-    mock_port: Optional[int] = None,
+    ollama_port: Optional[int] = None,
     enable_batch_processing: Optional[bool] = None,
     ray_workers: Optional[int] = None,
     dask_workers: Optional[int] = None,
@@ -111,7 +118,7 @@ def run_gateway(
 
     config = _resolve_gateway_config(
         gateway_port=gateway_port,
-        mock_port=mock_port,
+        ollama_port=ollama_port,
         enable_batch_processing=enable_batch_processing,
         ray_workers=ray_workers,
         dask_workers=dask_workers,
@@ -134,7 +141,7 @@ def run_gateway(
 def launch_gateway(
     *,
     gateway_port: Optional[int] = None,
-    mock_port: Optional[int] = None,
+    ollama_port: Optional[int] = None,
     enable_batch_processing: Optional[bool] = None,
     ray_workers: Optional[int] = None,
     dask_workers: Optional[int] = None,
@@ -147,7 +154,7 @@ def launch_gateway(
 
     config = _resolve_gateway_config(
         gateway_port=gateway_port,
-        mock_port=mock_port,
+        ollama_port=ollama_port,
         enable_batch_processing=enable_batch_processing,
         ray_workers=ray_workers,
         dask_workers=dask_workers,
@@ -163,7 +170,7 @@ def launch_gateway(
         run_gateway,
         kwargs={
             "gateway_port": gateway_port,
-            "mock_port": mock_port,
+            "ollama_port": ollama_port,
             "enable_batch_processing": enable_batch_processing,
             "ray_workers": ray_workers,
             "dask_workers": dask_workers,
@@ -180,7 +187,7 @@ def launch_gateway(
 def launch_gateway_subprocess(
     *,
     gateway_port: Optional[int] = None,
-    mock_port: Optional[int] = None,
+    ollama_port: Optional[int] = None,
     enable_batch_processing: Optional[bool] = None,
     ray_workers: Optional[int] = None,
     dask_workers: Optional[int] = None,
@@ -197,7 +204,7 @@ def launch_gateway_subprocess(
 
     config = _resolve_gateway_config(
         gateway_port=gateway_port,
-        mock_port=mock_port,
+        ollama_port=ollama_port,
         enable_batch_processing=enable_batch_processing,
         ray_workers=ray_workers,
         dask_workers=dask_workers,
