@@ -5,7 +5,7 @@ import json
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from . import client
 from .gateway_process import (
@@ -76,6 +76,11 @@ def run_demo(
     ollama_runtimes: Sequence[Mapping[str, Any]] | None = None,
     gateway_ollama_nodes: Sequence[Mapping[str, Any]] | None = None,
     use_mock_backend: bool = True,
+    enable_ray: Optional[bool] = None,
+    enable_dask: Optional[bool] = None,
+    ray_workers: Optional[int] = None,
+    dask_workers: Optional[int] = None,
+    enable_batch_processing: Optional[bool] = None,
 ) -> DemoResult:
     """Run the mock Ollama + SOLLOL gateway demo and return captured responses."""
 
@@ -184,6 +189,11 @@ def run_demo(
             mock_port=mock_port,
             readiness_timeout=readiness_timeout,
             ollama_nodes=unique_nodes,
+            enable_ray=enable_ray,
+            enable_dask=enable_dask,
+            ray_workers=ray_workers,
+            dask_workers=dask_workers,
+            enable_batch_processing=enable_batch_processing,
         )
         stack.enter_context(gateway_handle)
 
