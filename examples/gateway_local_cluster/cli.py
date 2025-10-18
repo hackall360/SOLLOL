@@ -98,6 +98,7 @@ def run(
     ),
     first_runtime_port: int = typer.Option(
         DEFAULT_OLLAMA_PORT,
+        "--first-runtime-port",
         "--ollama-port",
         show_default=True,
         help="Port used for the first real Ollama runtime launched by the demo.",
@@ -457,6 +458,7 @@ def start_gateway(
     ),
     first_runtime_port: int = typer.Option(
         DEFAULT_OLLAMA_PORT,
+        "--first-runtime-port",
         "--ollama-port",
         show_default=True,
         help="Port used to reach the first real Ollama runtime.",
