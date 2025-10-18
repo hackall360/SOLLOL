@@ -14,10 +14,30 @@ else
   export PYTHONPATH="${PROJECT_ROOT}/src"
 fi
 
-CLI_MODULE="examples.gateway_local_cluster"
+CLI_MODULE="examples.gateway_local_cluster.cli"
 CLI_COMMAND="run"
 
 CLI_ARGS=()
+
+if [[ -n "${OLLAMA_MODELS:-}" ]]; then
+  IFS=',' read -ra __models <<< "${OLLAMA_MODELS}"
+  for __model in "${__models[@]}"; do
+    __trimmed="$(echo "${__model}" | xargs)"
+    if [[ -n "${__trimmed}" ]]; then
+      CLI_ARGS+=("--model" "${__trimmed}")
+    fi
+  done
+  unset __models
+  unset __model
+  unset __trimmed
+fi
+
+if [[ -n "${MODEL_NAMES:-}" ]]; then
+  for __model in ${MODEL_NAMES}; do
+    CLI_ARGS+=("--model" "${__model}")
+  done
+  unset __model
+fi
 
 if [[ -n "${GATEWAY_PORT:-}" ]]; then
   CLI_ARGS+=("--gateway-port" "${GATEWAY_PORT}")
