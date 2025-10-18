@@ -11,12 +11,8 @@ Demonstrates the NEW universal dashboard features:
 
 import asyncio
 import logging
-import sys
-import os
 import threading
 import time
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from sollol import (
     UnifiedDashboard,
@@ -43,6 +39,12 @@ async def simulate_requests(router, dashboard):
         ("llama3.2:3b", "What is 2+2?"),
         ("llama3.2:3b", "Explain machine learning briefly"),
     ]
+
+    summary = {
+        "requests_attempted": len(test_requests),
+        "requests_succeeded": 0,
+        "requests_failed": 0,
+    }
 
     for i, (model, prompt) in enumerate(test_requests, 1):
         try:
@@ -77,13 +79,26 @@ async def simulate_requests(router, dashboard):
             )
 
             logger.info(f"✅ Request {i}: {prompt[:30]}... ({latency_ms:.0f}ms)")
+            summary["requests_succeeded"] += 1
             await asyncio.sleep(2)
 
         except Exception as e:
             logger.error(f"❌ Request {i} failed: {e}")
+            summary["requests_failed"] += 1
 
+    return summary
 
-async def main():
+async def run_demo(*, run_duration: float | None = None, heartbeat_interval: float = 10.0):
+    """Run the live dashboard demo and return a summary dictionary."""
+
+    summary: dict[str, float | int] = {
+        "requests_attempted": 0,
+        "requests_succeeded": 0,
+        "requests_failed": 0,
+        "uptime_seconds": 0.0,
+    }
+
+    start_time = time.time()
     print("=" * 80)
     print("  🚀 SOLLOL Universal Dashboard - Live Demo")
     print("=" * 80)
@@ -165,7 +180,8 @@ async def main():
     # Step 5: Generate some activity
     print("5️⃣  Generating dashboard activity...")
     print()
-    await simulate_requests(router, dashboard)
+    request_summary = await simulate_requests(router, dashboard)
+    summary.update(request_summary)
     print()
 
     # Keep running
@@ -183,16 +199,33 @@ async def main():
     print("   This is the NEW universal observability feature.")
     print()
 
+    deadline = time.monotonic() + run_duration if run_duration is not None else None
     try:
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(heartbeat_interval)
             logger.info("📊 Dashboard still running... (this app is visible in /api/applications)")
+            if deadline is not None and time.monotonic() >= deadline:
+                logger.info("⏱️ Run duration reached; preparing to shut down.")
+                break
     except KeyboardInterrupt:
-        print("\n\n🛑 Shutting down...")
-        client.unregister()
-        await router.shutdown()
-        print("✅ Shutdown complete!")
+        logger.info("🔻 Interrupt received; shutting down demo.")
+
+    print("\n\n🛑 Shutting down...")
+    client.unregister()
+    await router.shutdown()
+    print("✅ Shutdown complete!")
+
+    summary["uptime_seconds"] = time.time() - start_time
+    print("\nSummary:")
+    print(
+        "  Requests: "
+        f"{summary['requests_succeeded']}/{summary['requests_attempted']} succeeded"
+    )
+    print(f"  Failures: {summary['requests_failed']}")
+    print(f"  Uptime  : {summary['uptime_seconds']:.1f}s")
+
+    return summary
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_demo())
