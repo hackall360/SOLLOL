@@ -20,6 +20,12 @@ __all__ = [
     "fetch_health",
     "fetch_stats_async",
     "fetch_stats",
+    "fetch_dashboard_config_async",
+    "fetch_dashboard_config",
+    "fetch_dashboard_applications_async",
+    "fetch_dashboard_applications",
+    "fetch_dashboard_routing_logs_async",
+    "fetch_dashboard_routing_logs",
     "run_chat_async",
     "run_chat",
     "run_generate_async",
@@ -94,8 +100,9 @@ async def _async_request(
     url: str,
     *,
     json_payload: Mapping[str, Any] | None = None,
+    params: Mapping[str, Any] | None = None,
 ) -> Any:
-    response = await client.request(method, url, json=json_payload)
+    response = await client.request(method, url, json=json_payload, params=params)
     response.raise_for_status()
     return response.json()
 
@@ -106,8 +113,9 @@ def _sync_request(
     url: str,
     *,
     json_payload: Mapping[str, Any] | None = None,
+    params: Mapping[str, Any] | None = None,
 ) -> Any:
-    response = client.request(method, url, json=json_payload)
+    response = client.request(method, url, json=json_payload, params=params)
     response.raise_for_status()
     return response.json()
 
@@ -174,6 +182,138 @@ def fetch_stats(
     try:
         data = _sync_request(client, "GET", "/api/stats")
         _ensure("timestamp" in data, "Stats response missing timestamp field")
+        return data
+    finally:
+        if owns_client and client is not None:
+            client.close()
+
+
+async def fetch_dashboard_config_async(
+    base_url: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> Mapping[str, Any]:
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient(base_url=base_url, timeout=_TIMEOUT)
+    try:
+        data = await _async_request(client, "GET", "/api/dashboard/config")
+        _ensure(
+            "ray_dashboard_url" in data,
+            "Dashboard config response missing ray_dashboard_url",
+        )
+        return data
+    finally:
+        if owns_client and client is not None:
+            await client.aclose()
+
+
+def fetch_dashboard_config(
+    base_url: str,
+    *,
+    client: httpx.Client | None = None,
+) -> Mapping[str, Any]:
+    owns_client = client is None
+    if owns_client:
+        client = httpx.Client(base_url=base_url, timeout=_TIMEOUT)
+    try:
+        data = _sync_request(client, "GET", "/api/dashboard/config")
+        _ensure(
+            "ray_dashboard_url" in data,
+            "Dashboard config response missing ray_dashboard_url",
+        )
+        return data
+    finally:
+        if owns_client and client is not None:
+            client.close()
+
+
+async def fetch_dashboard_applications_async(
+    base_url: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> Mapping[str, Any]:
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient(base_url=base_url, timeout=_TIMEOUT)
+    try:
+        data = await _async_request(client, "GET", "/api/applications")
+        _ensure(
+            "applications" in data and isinstance(data["applications"], list),
+            "Dashboard applications response missing list of applications",
+        )
+        return data
+    finally:
+        if owns_client and client is not None:
+            await client.aclose()
+
+
+def fetch_dashboard_applications(
+    base_url: str,
+    *,
+    client: httpx.Client | None = None,
+) -> Mapping[str, Any]:
+    owns_client = client is None
+    if owns_client:
+        client = httpx.Client(base_url=base_url, timeout=_TIMEOUT)
+    try:
+        data = _sync_request(client, "GET", "/api/applications")
+        _ensure(
+            "applications" in data and isinstance(data["applications"], list),
+            "Dashboard applications response missing list of applications",
+        )
+        return data
+    finally:
+        if owns_client and client is not None:
+            client.close()
+
+
+async def fetch_dashboard_routing_logs_async(
+    base_url: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    limit: int = 25,
+) -> Mapping[str, Any]:
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient(base_url=base_url, timeout=_TIMEOUT)
+    try:
+        data = await _async_request(
+            client,
+            "GET",
+            "/api/routing_logs",
+            params={"limit": int(limit)},
+        )
+        _ensure(
+            "logs" in data and isinstance(data["logs"], list),
+            "Routing logs response missing logs array",
+        )
+        return data
+    finally:
+        if owns_client and client is not None:
+            await client.aclose()
+
+
+def fetch_dashboard_routing_logs(
+    base_url: str,
+    *,
+    client: httpx.Client | None = None,
+    limit: int = 25,
+) -> Mapping[str, Any]:
+    owns_client = client is None
+    if owns_client:
+        client = httpx.Client(base_url=base_url, timeout=_TIMEOUT)
+    try:
+        data = _sync_request(
+            client,
+            "GET",
+            "/api/routing_logs",
+            params={"limit": int(limit)},
+        )
+        _ensure(
+            "logs" in data and isinstance(data["logs"], list),
+            "Routing logs response missing logs array",
+        )
         return data
     finally:
         if owns_client and client is not None:
@@ -366,36 +506,145 @@ def run_embed(
             client.close()
 
 
-async def run_full_sequence_async(base_url: str) -> dict[str, Mapping[str, Any]]:
+def _as_mapping(value: Any) -> Mapping[str, Any] | None:
+    return value if isinstance(value, Mapping) else None
+
+
+def _collect_ray_status(responses: Mapping[str, Any]) -> Mapping[str, Any]:
+    summary: dict[str, Any] = {}
+    health = _as_mapping(responses.get("health"))
+    stats = _as_mapping(responses.get("stats"))
+
+    ray_health = _as_mapping(health.get("ray_parallel_execution")) if health else None
+    if ray_health:
+        summary["ray_parallel_execution"] = ray_health
+
+    hybrid_stats = _as_mapping(stats.get("hybrid_routing")) if stats else None
+    if hybrid_stats:
+        summary["hybrid_routing"] = hybrid_stats
+
+    return summary
+
+
+def _collect_dask_status(responses: Mapping[str, Any]) -> Mapping[str, Any]:
+    summary: dict[str, Any] = {}
+    health = _as_mapping(responses.get("health"))
+    stats = _as_mapping(responses.get("stats"))
+
+    dask_health = _as_mapping(health.get("dask_batch_processing")) if health else None
+    if dask_health:
+        summary["dask_batch_processing"] = dask_health
+
+    batch_stats = _as_mapping(stats.get("batch_jobs")) if stats else None
+    if batch_stats:
+        summary["batch_jobs"] = batch_stats
+
+    return summary
+
+
+def _collect_routing_metadata(responses: Mapping[str, Any]) -> Mapping[str, Any]:
+    routing_details: dict[str, Any] = {}
+    stats = _as_mapping(responses.get("stats"))
+    if stats:
+        hybrid = _as_mapping(stats.get("hybrid_routing"))
+        if hybrid:
+            routing_details["stats_hybrid_routing"] = hybrid
+
+    for key in ("chat", "generate", "embed"):
+        data = _as_mapping(responses.get(key))
+        if not data:
+            continue
+        routing = _as_mapping(data.get("_sollol_routing"))
+        if routing:
+            routing_details[f"{key}_routing"] = routing
+
+    return routing_details
+
+
+def _attach_gateway_metadata(responses: MutableMapping[str, Any]) -> None:
+    ray_status = _collect_ray_status(responses)
+    if ray_status:
+        responses.setdefault("ray_status", ray_status)
+
+    dask_status = _collect_dask_status(responses)
+    if dask_status:
+        responses.setdefault("dask_status", dask_status)
+
+    routing_metadata = _collect_routing_metadata(responses)
+    if routing_metadata:
+        responses.setdefault("routing_metadata", routing_metadata)
+
+
+async def run_full_sequence_async(
+    base_url: str,
+    *,
+    dashboard_url: str | None = None,
+) -> dict[str, Mapping[str, Any]]:
     async with httpx.AsyncClient(base_url=base_url, timeout=_TIMEOUT) as client:
         health = await fetch_health_async(base_url, client=client)
         stats = await fetch_stats_async(base_url, client=client)
         chat = await run_chat_async(base_url, client=client)
         generate = await run_generate_async(base_url, client=client)
         embed = await run_embed_async(base_url, client=client)
-    return {
+
+    results: dict[str, Any] = {
         "health": health,
         "stats": stats,
         "chat": chat,
         "generate": generate,
         "embed": embed,
     }
+    _attach_gateway_metadata(results)
+
+    if dashboard_url:
+        async with httpx.AsyncClient(base_url=dashboard_url, timeout=_TIMEOUT) as dashboard_client:
+            results["dashboard_config"] = await fetch_dashboard_config_async(
+                dashboard_url, client=dashboard_client
+            )
+            results["dashboard_applications"] = await fetch_dashboard_applications_async(
+                dashboard_url, client=dashboard_client
+            )
+            results["dashboard_routing_logs"] = await fetch_dashboard_routing_logs_async(
+                dashboard_url, client=dashboard_client
+            )
+
+    return results
 
 
-def run_full_sequence(base_url: str) -> dict[str, Mapping[str, Any]]:
+def run_full_sequence(
+    base_url: str,
+    *,
+    dashboard_url: str | None = None,
+) -> dict[str, Mapping[str, Any]]:
     with httpx.Client(base_url=base_url, timeout=_TIMEOUT) as client:
         health = fetch_health(base_url, client=client)
         stats = fetch_stats(base_url, client=client)
         chat = run_chat(base_url, client=client)
         generate = run_generate(base_url, client=client)
         embed = run_embed(base_url, client=client)
-    return {
+
+    results: dict[str, Any] = {
         "health": health,
         "stats": stats,
         "chat": chat,
         "generate": generate,
         "embed": embed,
     }
+    _attach_gateway_metadata(results)
+
+    if dashboard_url:
+        with httpx.Client(base_url=dashboard_url, timeout=_TIMEOUT) as dashboard_client:
+            results["dashboard_config"] = fetch_dashboard_config(
+                dashboard_url, client=dashboard_client
+            )
+            results["dashboard_applications"] = fetch_dashboard_applications(
+                dashboard_url, client=dashboard_client
+            )
+            results["dashboard_routing_logs"] = fetch_dashboard_routing_logs(
+                dashboard_url, client=dashboard_client
+            )
+
+    return results
 
 
 def _format_multiline_strings(pretty: str) -> str:
@@ -446,7 +695,19 @@ def _format_multiline_strings(pretty: str) -> str:
 
 def format_results(results: Mapping[str, Any]) -> str:
     sections: list[str] = []
-    for key in ("health", "stats", "chat", "generate", "embed"):
+    for key in (
+        "health",
+        "stats",
+        "ray_status",
+        "dask_status",
+        "routing_metadata",
+        "dashboard_config",
+        "dashboard_applications",
+        "dashboard_routing_logs",
+        "chat",
+        "generate",
+        "embed",
+    ):
         if key in results:
             pretty = json.dumps(
                 results[key], indent=2, sort_keys=True, default=str, ensure_ascii=False
