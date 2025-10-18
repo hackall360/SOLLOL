@@ -20,6 +20,27 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 
+def _run_unified_dashboard_process(
+    *,
+    dashboard_port: int,
+    host: str,
+    enable_dask: bool,
+    ray_dashboard_port: int,
+    dask_dashboard_port: int,
+) -> None:
+    """Entry point used by :func:`start_unified_dashboard` in a background process."""
+
+    from sollol.unified_dashboard import UnifiedDashboard
+
+    dashboard = UnifiedDashboard(
+        ray_dashboard_port=ray_dashboard_port,
+        dask_dashboard_port=dask_dashboard_port,
+        dashboard_port=dashboard_port,
+        enable_dask=enable_dask,
+    )
+    dashboard.run(host=host)
+
+
 @dataclass
 class ManagedProcess:
     """Wrapper that normalises process management across APIs.
@@ -165,6 +186,39 @@ def start_sollol_gateway(
         popen,
         name=name,
         readiness_check=readiness_check,
+        readiness_timeout=readiness_timeout,
+    )
+
+
+def start_unified_dashboard(
+    *,
+    dashboard_port: int = 8080,
+    host: str = "127.0.0.1",
+    enable_dask: bool = False,
+    ray_dashboard_port: int = 8265,
+    dask_dashboard_port: int = 8787,
+    readiness_timeout: float = 30.0,
+) -> ManagedProcess:
+    """Launch the SOLLOL Unified Dashboard in a background process."""
+
+    def _readiness_check(*, timeout: float, **_kwargs: Any) -> None:
+        poll_endpoint(
+            f"http://127.0.0.1:{dashboard_port}/api/applications",
+            timeout=timeout,
+            interval=0.5,
+        )
+
+    return start_background_process(
+        _run_unified_dashboard_process,
+        kwargs={
+            "dashboard_port": dashboard_port,
+            "host": host,
+            "enable_dask": enable_dask,
+            "ray_dashboard_port": ray_dashboard_port,
+            "dask_dashboard_port": dask_dashboard_port,
+        },
+        name="unified_dashboard",
+        readiness_check=_readiness_check,
         readiness_timeout=readiness_timeout,
     )
 

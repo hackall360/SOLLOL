@@ -12,12 +12,14 @@ from .gateway_process import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_OLLAMA_PORT,
     launch_gateway,
+    _resolve_gateway_config,
 )
 from .model_setup import ensure_model
 from .process_utils import (
     format_ollama_nodes,
     poll_endpoint,
     start_ollama_runtime,
+    start_unified_dashboard,
 )
 
 
@@ -29,6 +31,7 @@ class DemoResult:
     """Container holding payloads used for the demo and the gateway responses."""
 
     gateway_base_url: str
+    dashboard_base_url: str | None
     ollama_nodes: tuple[dict[str, Any], ...]
     payloads: Mapping[str, Mapping[str, Any]]
     responses: Mapping[str, Mapping[str, Any]]
@@ -53,6 +56,18 @@ class DemoResult:
 
         return client.format_results(self.responses)
 
+    @property
+    def ray_status(self) -> Mapping[str, Any]:
+        return self.responses.get("ray_status", {})
+
+    @property
+    def dask_status(self) -> Mapping[str, Any]:
+        return self.responses.get("dask_status", {})
+
+    @property
+    def routing_metadata(self) -> Mapping[str, Any]:
+        return self.responses.get("routing_metadata", {})
+
 
 def _load_payloads() -> dict[str, Mapping[str, Any]]:
     payloads: dict[str, Mapping[str, Any]] = {}
@@ -69,6 +84,8 @@ def run_demo(
     gateway_port: int = DEFAULT_GATEWAY_PORT,
     first_runtime_port: int = DEFAULT_OLLAMA_PORT,
     host: str = "127.0.0.1",
+    dashboard_port: int = 8080,
+    dashboard_host: str = "127.0.0.1",
     readiness_timeout: float = 30.0,
     ollama_runtimes: Sequence[Mapping[str, Any]] | None = None,
     gateway_ollama_nodes: Sequence[Mapping[str, Any]] | None = None,
@@ -85,6 +102,7 @@ def run_demo(
 
     with ExitStack() as stack:
         started_nodes: list[dict[str, Any]] = []
+        dashboard_base_url: str | None = None
 
         runtime_entries = list(ollama_runtimes or [{"host": host, "port": first_runtime_port}])
         if not runtime_entries:
@@ -161,6 +179,17 @@ def run_demo(
             seen_pairs.add(marker)
             unique_nodes.append({"host": resolved_host, "port": resolved_port})
 
+        resolved_gateway_config = _resolve_gateway_config(
+            gateway_port=gateway_port,
+            ollama_port=first_runtime_port,
+            enable_batch_processing=enable_batch_processing,
+            ray_workers=ray_workers,
+            dask_workers=dask_workers,
+            enable_ray=enable_ray,
+            enable_dask=enable_dask,
+            ollama_nodes=unique_nodes,
+        )
+
         gateway_handle = launch_gateway(
             gateway_port=gateway_port,
             ollama_port=first_runtime_port,
@@ -174,11 +203,33 @@ def run_demo(
         )
         stack.enter_context(gateway_handle)
 
+        access_dashboard_host = (
+            dashboard_host if dashboard_host not in {"0.0.0.0", ""} else "127.0.0.1"
+        )
+
+        should_start_dashboard = (
+            resolved_gateway_config.ray_workers > 0
+            or resolved_gateway_config.dask_workers > 0
+        )
+        if should_start_dashboard:
+            dashboard_handle = start_unified_dashboard(
+                dashboard_port=dashboard_port,
+                host=dashboard_host,
+                enable_dask=resolved_gateway_config.dask_workers > 0,
+                readiness_timeout=readiness_timeout,
+            )
+            stack.enter_context(dashboard_handle)
+            dashboard_base_url = f"http://{access_dashboard_host}:{dashboard_port}"
+
         poll_endpoint(f"{gateway_base_url}/api/health")
-        responses = client.run_full_sequence(gateway_base_url)
+        responses = client.run_full_sequence(
+            gateway_base_url,
+            dashboard_url=dashboard_base_url,
+        )
 
     return DemoResult(
         gateway_base_url=gateway_base_url,
+        dashboard_base_url=dashboard_base_url,
         ollama_nodes=tuple(unique_nodes),
         payloads=payloads,
         responses=responses,
