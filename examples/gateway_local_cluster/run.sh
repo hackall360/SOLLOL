@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Convenience wrapper that bridges environment variables into the Typer CLI and
-# guarantees the source tree is importable without an editable installation.
+# Convenience wrapper for launching the local cluster demo with real Ollama
+# runtimes. The script forwards common environment variables into the Typer
+# CLI so you can configure behaviour without typing long option lists:
+#
+#   * ``OLLAMA_MODELS``/``MODEL_NAMES`` – comma-separated (or space-separated
+#     for ``MODEL_NAMES``) list of models to preload with ``ollama pull``.
+#   * ``NODES`` – number of ``ollama serve`` processes to launch.
+#   * ``OLLAMA_PORT`` – base port for the first ``ollama serve`` instance.
+#   * ``GATEWAY_PORT`` – listening port for the SOLLOL gateway process.
+#
+# The wrapper also ensures the source tree is importable without an editable
+# installation.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -44,9 +54,7 @@ if [[ -n "${GATEWAY_PORT:-}" ]]; then
 fi
 
 if [[ -n "${OLLAMA_PORT:-}" ]]; then
-  CLI_ARGS+=("--ollama-port" "${OLLAMA_PORT}")
-elif [[ -n "${MOCK_PORT:-}" ]]; then
-  CLI_ARGS+=("--ollama-port" "${MOCK_PORT}")
+  CLI_ARGS+=("--first-runtime-port" "${OLLAMA_PORT}")
 fi
 
 if [[ -n "${HOST:-}" ]]; then
