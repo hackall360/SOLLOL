@@ -81,6 +81,7 @@ line_length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["requires_ollama: marks tests that require an Ollama runtime or compatible mock server"]
 python_files = ["test_*.py"]
 norecursedirs = ["SynapticLlamas", "venv", "build", "dist", ".git"]
 asyncio_mode = "auto"
